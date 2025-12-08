@@ -260,7 +260,6 @@ var string forceExitPendingNote = ""
 
 var color weekRetColor = color.orange
 var float currentDrawdown = 0.0
-var float totalReturnPct = 0.0
 var float annReturn = 0.0
 var float sharpeAnnual = 0.0
 
@@ -653,7 +652,6 @@ if inRange
                 if enableEquityDebug
                     log.error(str.format("最新净值: {0,number,#.##}", equityClosedSeries))
 
-    totalReturnPct := initialCapital > 0 ? (equityClosedSeries / initialCapital - 1) * 100 : na
     weekRetColor := nz(getColor(holdingIdx), color.orange)
     // Annualized return based on elapsed calendar time
     msPerYear = 365.25 * 24 * 60 * 60 * 1000.0
@@ -713,8 +711,8 @@ if inRange
         table.cell(ddTable, 1, 0, "数值", text_color=color.white, bgcolor=color.new(color.blue, 40))
         table.cell(ddTable, 0, 1, "最大回撤", bgcolor=color.new(color.black, 0), text_color=color.white)
         table.cell(ddTable, 1, 1, str.format("{0,number,#.##}%", maxDrawdownSeries * 100), text_color=color.red)
-        table.cell(ddTable, 0, 2, "总收益率", bgcolor=color.new(color.black, 0), text_color=color.white)
-        table.cell(ddTable, 1, 2, str.format("{0,number,#.##}%", nz(totalReturnPct, 0)), text_color=color.green)
+        table.cell(ddTable, 0, 2, "最终净值", bgcolor=color.new(color.black, 0), text_color=color.white)
+        table.cell(ddTable, 1, 2, str.format("{0,number,#.##}", nz(equity, 0)), text_color=color.green)
         table.cell(ddTable, 0, 3, "回测范围", bgcolor=color.new(color.black, 0), text_color=color.white)
         table.cell(ddTable, 1, 3, str.format("{0} 至 {1}", startText, endText), text_color=color.black)
         table.cell(ddTable, 0, 4, "年化收益率", bgcolor=color.new(color.black, 0), text_color=color.white)
