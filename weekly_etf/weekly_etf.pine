@@ -16,7 +16,7 @@ var bool[] riskOffExclude = array.new_bool()   // 基准跌破均线时需要移
 
 // === Market filter (基准均线) ===
 useMarketFilter = input.bool(false, "启用基准均线过滤", group="Market Filter", tooltip="基准指数跌破指定SMA时，可将部分品种从轮动列表中移除")
-marketFrictionPct = input.float(0.0, "均线防摩擦系数(%)", minval=0.0, maxval=20.0, step=0.1, group="Market Filter", tooltip="收盘需高/低于均线一定比例才算上穿/下穿，降低震荡噪声")
+marketFrictionPct = input.float(0.0, "均线防摩擦系数(%)", minval=0.0, maxval=20.0, step=1, group="Market Filter", tooltip="收盘需高/低于均线一定比例才算上穿/下穿，降低震荡噪声")
 forceExitOnFilter = input.bool(true, "风险过滤直接清仓", group="Market Filter", tooltip="开启后，基准跌破SMA且当前持有被标记的风险品种时，立即按日线价格平仓；价格遵循换仓时点设置（收盘 / 次日开盘）")
 forceExitMode = input.string("次日开盘", "强平成交时点", options=["当日收盘", "次日开盘"], group="Market Filter", tooltip="强平触发时使用的成交价：固定当日收盘或次日开盘")
 marketFilterSymbol = input.symbol("SP:SPX", "基准符号", group="Market Filter", tooltip="默认使用SPX，可自定义为其它指数或资产")
@@ -42,6 +42,7 @@ showMaxDdLabel   = input.bool(true, "显示最大回撤标注", group="Display")
 // Debug options
 enableDdDebug = input.bool(false, "启用回撤调试日志", group="Debug")
 enableEquityDebug = input.bool(false, "启用净值调试日志", group="Debug")
+enableFloatingEquityDebug = input.bool(false, "启用浮动净值调试日志", group="Debug")
 enablePositionLog = input.bool(false, "启用仓位变动日志", group="Debug")
 enableMomentumLog = input.bool(false, "启用涨幅计算日志", group="Debug")
 enableFilterLog = input.bool(false, "启用基准过滤日志", group="Debug")
@@ -66,9 +67,15 @@ marketAboveSma = marketClose >= smaUp
 marketBelowSma = marketClose <= smaDown
 marketCrossUp = ta.crossover(marketClose, smaUp)
 marketCrossDown = ta.crossunder(marketClose, smaDown)
+// 风险过滤状态：下穿时进入风险关闭(true)，上穿时恢复正常(false)
+var bool marketRiskOff = false
 if useMarketFilter and inRange and barstate.isconfirmed and (marketCrossUp or marketCrossDown)
     dirTxt = marketCrossUp ? "上穿" : "下穿"
     crossDateTxt = formatDate(marketDate)
+    if marketCrossDown
+        marketRiskOff := true
+    else if marketCrossUp
+        marketRiskOff := false
     if enableFilterLog
         log.warning(str.format("基准 {0} {1} SMA{2}±{3,number,#.##}% 交易日 {4} 收盘 {5} 上沿 {6} 下沿 {7}", marketFilterSymbol, dirTxt, marketFilterLen, marketFrictionPct, crossDateTxt, str.tostring(marketClose, format.mintick), str.tostring(smaUp, format.mintick), str.tostring(smaDown, format.mintick)))
 
@@ -165,7 +172,7 @@ fmtPrice(float v) =>
 isSymbolEligible(int idx) =>
     if not useMarketFilter
         true
-    else if not marketBelowSma
+    else if not marketRiskOff
         true
     else if idx >= array.size(riskOffExclude)
         true
@@ -375,6 +382,8 @@ if inRange
             label.new(bar_index, equity, exitLblTxt, color=color.new(color.red, 0), textcolor=color.white, style=label.style_label_down, size=size.small)
         if enablePositionLog
             log.error(str.format("风险过滤清仓: {0} @ {1} {2}", exitLabel, fmtPrice(exitPrice), noteTxt))
+        if enableEquityDebug
+            log.error(str.format("最新净值: {0,number,#.##}", equityClosedSeries))
 
     // 调仓/强平结算：仅在换仓或清仓时结算净值
     if rebalanceConfirmed
@@ -636,11 +645,13 @@ if inRange
             lastSwitch := label.new(bar_index, equityClosedSeries, msg, color=color.new(color.blue, 0), textcolor=color.white, style=label.style_label_up)
             alert(msg, alert.freq_once_per_bar)
             if isTrialEquityMsg
-                if enableEquityDebug
+                if enableFloatingEquityDebug
                     log.warning(msg)
             else
                 if enablePositionLog
                     log.error(msg)
+                if enableEquityDebug
+                    log.error(str.format("最新净值: {0,number,#.##}", equityClosedSeries))
 
     totalReturnPct := initialCapital > 0 ? (equityClosedSeries / initialCapital - 1) * 100 : na
     weekRetColor := nz(getColor(holdingIdx), color.orange)
