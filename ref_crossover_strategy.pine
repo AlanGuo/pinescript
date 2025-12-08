@@ -1,0 +1,60 @@
+//@version=6
+strategy("均线穿越交易策略", initial_capital = 10000, default_qty_type = strategy.cash, default_qty_value = 10000, overlay=true)
+
+// 用户输入
+ref_symbol = input.string("SPX", title="交易标的", group="标的")
+ma_type = input.string("SMA", title="均线类型", options=["SMA", "EMA", "RMA"], group="策略参数")
+ma_length = input.int(225, title="均线周期", minval=1, group="策略参数")
+boundary_pct = input.float(1.0, title="穿越边界百分比", minval=0.0, step=0.1, group="策略参数") / 100
+
+// 回测日期范围
+start_date = input.time(timestamp("1 Jan 2018"), "开始日期", group="回测设置")
+end_date = input.time(timestamp("31 Dec 2099"), "结束日期", group="回测设置")
+
+// 检查当前时间是否在回测时间段内
+in_date_range = time >= start_date and time <= end_date
+
+// 获取价格数据
+ref_price = request.security(ref_symbol, "D", close)
+
+// 计算均线
+var ref_ma = 0.0
+if ma_type == "SMA"
+    ref_ma := ta.sma(ref_price, ma_length)
+else if ma_type == "EMA"
+    ref_ma := ta.ema(ref_price, ma_length)
+else if ma_type == "RMA"
+    ref_ma := ta.rma(ref_price, ma_length)
+
+// 计算边界值
+upper_boundary = ref_ma * (1 + boundary_pct)
+lower_boundary = ref_ma * (1 - boundary_pct)
+
+// 检测穿越
+crossover_up = ta.crossover(ref_price, upper_boundary)
+crossover_down = ta.crossunder(ref_price, lower_boundary)
+
+plot(lower_boundary, display = display.status_line)
+plot(upper_boundary, display = display.status_line)
+plot(ref_price, color = color.orange, display = display.status_line)
+
+// 执行交易逻辑
+if crossover_up and in_date_range
+    strategy.entry("Buy", strategy.long, comment="上穿" + ma_type + "买入")
+
+if crossover_down and strategy.position_size > 0
+    strategy.close("Buy", comment="下穿" + ma_type + "卖出")
+
+// 添加标记
+plotshape(crossover_up and in_date_range, title="买入信号", location=location.belowbar, color=color.green, style=shape.triangleup, size=size.small)
+plotshape(crossover_down and strategy.position_size > 0, title="卖出信号", location=location.abovebar, color=color.red, style=shape.triangledown, size=size.small)
+
+// 显示策略信息
+var table info_table = table.new(position.top_right, 2, 3, color.new(color.blue, 80))
+if barstate.islastconfirmedhistory
+    table.cell(info_table, 0, 0, "策略", bgcolor=color.new(color.blue, 80), text_color=color.white)
+    table.cell(info_table, 1, 0, "均线穿越交易策略", bgcolor=color.new(color.blue, 80), text_color=color.white)
+    table.cell(info_table, 0, 1, "规则", bgcolor=color.new(color.blue, 90), text_color=color.white)
+    table.cell(info_table, 1, 1, "价格上穿" + ma_type + "(" + str.tostring(ma_length) + ")买入，下穿卖出，边界: " + str.tostring(boundary_pct * 100, "#.#") + "%", bgcolor=color.new(color.blue, 90), text_color=color.white)
+    table.cell(info_table, 0, 2, "参数", bgcolor=color.new(color.blue, 90), text_color=color.white)
+    table.cell(info_table, 1, 2, ma_type + "周期: " + str.tostring(ma_length) + ", 边界: " + str.tostring(boundary_pct * 100, "#.#") + "%", bgcolor=color.new(color.blue, 90), text_color=color.white)

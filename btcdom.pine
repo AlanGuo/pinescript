@@ -1,0 +1,30 @@
+//@version=6
+strategy("BTCDOM策略", initial_capital = 10000, default_qty_type = strategy.cash, default_qty_value = 10000, overlay=true)
+
+// 用户输入
+btc_symbol = input.string("BINANCE:BTCUSDT", title="BTC", group="标的")
+ma_length = input.int(30, title="均线长度", minval=1, group="标的")
+slide_pct = input.float(1, title = "均线滑点(%)") / 100
+take_profit_pct = input.float(15, title="止盈百分比", minval=0, step=0.1, group="策略参数") / 100
+
+// 获取BTC价格和日均线
+btc_price = request.security(btc_symbol, "D", close)
+ma_value = ta.sma(btc_price, ma_length)
+
+// 绘制120日均线
+plot(btc_price, title = "BTC价格", color=color.blue, display = display.status_line)
+plot(ma_value, title="均线", color=color.orange, display = display.status_line)
+
+// 定义买入和卖出条件
+buy_condition = ta.crossunder(btc_price, ma_value * (1 - slide_pct))  // BTC价格下穿30均线
+sell_condition = ta.crossover(btc_price, ma_value *  (1 + slide_pct))  // BTC价格上穿30均线
+
+// 执行回测逻辑
+if buy_condition
+    strategy.entry("Buy", strategy.long)
+    entry_price = strategy.opentrades.entry_price(strategy.opentrades - 1)
+    take_profit_price = entry_price * (1 + take_profit_pct)
+    strategy.exit("TakeProfit", "Buy", limit=take_profit_price)
+
+if sell_condition
+    strategy.close("Buy", comment="Sell on MA crossover")

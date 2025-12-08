@@ -1,0 +1,67 @@
+//@version=6
+strategy("宽度抄底", initial_capital = 100000, default_qty_value = 100, default_qty_type = strategy.percent_of_equity, margin_long = 50, overlay=true)
+
+// 用户输入
+ndfi_symbol = input.string("NDFI", title="50日宽度指标", group="宽度指标")  // NDFI的符号（可以配置为不同来源）
+ndfi_lower_limit_above_ma = input.float(25.0, title="宽度下限（牛市）", minval=0, maxval=100, group="宽度指标")
+ndfi_lower_limit_below_ma = input.float(10.0, title="宽度下限（熊市）", minval=0, maxval=100, group="宽度指标")
+enum ma_type
+    sma = "SMA"
+    ema = "EMA"
+selected_ma_type = input.enum(defval = ma_type.sma, title="均线类型", options = [ma_type.sma, ma_type.ema], group="宽度指标")
+ma_length = input.int(225, title="均线长度", minval=1, group="宽度指标")
+slide_pct = input.float(1, title = "滑点(%)") / 100.0
+buy_above_ma = input.bool(true, "牛抄")
+buy_under_ma = input.bool(false, "熊右抄")
+
+// 定义回测时间段
+start_date = input.time(timestamp("1 Feb 2018 00:00 +0800"), "Date", group = "回测")
+end_date = input.time(timestamp("31 Dec 2099 00:00 +0800"), "Date", group = "回测")
+
+// 获取NDFI数据（假设NDFI数据符号有效）
+ndfi_data = request.security(ndfi_symbol, "D", close)  // 请求NDFI的日线数据
+
+// 计算225日均线
+ma_value = selected_ma_type == ma_type.sma ? ta.sma(close, ma_length) : ta.ema(close, ma_length)
+plot(ma_value, title="225日均线", color=color.orange, linewidth=1)
+
+// 根据价格与均线的关系设置NDFI下限
+ndfi_lower_limit = close > ma_value ? ndfi_lower_limit_above_ma : ndfi_lower_limit_below_ma
+
+// 买入和卖出条件
+price_lower = true
+if strategy.position_size > 0 and close > strategy.position_avg_price
+    price_lower := false
+
+long_condition_above_ma = buy_above_ma and close > ma_value * (1 + slide_pct) and ndfi_data < ndfi_lower_limit_above_ma and price_lower  // 均线以上，NDFI低于25
+long_condition_under_ma = buy_under_ma and close < ma_value * (1 - slide_pct) and ndfi_data[2] < ndfi_lower_limit_below_ma and ndfi_data >= ndfi_lower_limit_below_ma and price_lower   // 均线以下，NDFI低于10且已经走出来
+
+var bool ever_cross_over_ma = false
+
+// 定义平仓条件
+cross_over = ta.crossover(close, ma_value * (1 + slide_pct))
+if not long_condition_under_ma and cross_over
+    ever_cross_over_ma := true
+sell_long_condition = ta.crossunder(close, ma_value * (1 - slide_pct))  // 均线下破时卖出
+
+// 检查当前时间是否在回测时间段内
+in_date_range = (time >= start_date) and (time <= end_date)
+
+// 执行回测逻辑
+if long_condition_above_ma and in_date_range
+    strategy.order("Buy Above MA", strategy.long)
+    ever_cross_over_ma := true
+
+if long_condition_under_ma and in_date_range
+    strategy.order("Buy Under MA", strategy.long)
+    ever_cross_over_ma := false
+
+if ever_cross_over_ma and sell_long_condition and strategy.position_size > 0
+    strategy.close_all(comment="Sell on MA break")
+
+// 在NDFI低于下限时，将背景颜色标记为不同的颜色
+bgcolor(ndfi_data < ndfi_lower_limit_below_ma ? color.new(color.blue, 90) : na)  // 如果NDFI低于10，背景为蓝色
+bgcolor(ndfi_data < ndfi_lower_limit_above_ma ? color.new(color.green, 90) : na)  // 如果NDFI低于25，背景为绿色
+
+// 绘制NDFI数据
+plot(ndfi_data, color=color.blue, linewidth=2, title="NDFI", display=display.status_line)

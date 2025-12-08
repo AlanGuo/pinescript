@@ -1,0 +1,46 @@
+//@version=6
+indicator("Central Bank", overlay=true, scale = scale.left)
+
+// 输入设置
+fed_active = input(true, title = "FED (Federal Reserve System)")
+tga_active = input(true, title = "TGA (Treasury General Account)")
+rrp_active = input(true, title = "RRP (Reverse Repurchase Agreements)")
+ecb_active = input(true, title = "ECB (European Central Bank)")
+pbc_active = input(true, title = "PBC (People's Bank of China)")
+boj_active = input(true, title = "BOJ (Bank of Japan)")
+other_active = input(false, title = "Other Central Banks")
+sma_input = input(defval = 1, title = "SMA Length")
+offset_info = input(0, title = "Offset")
+
+// 转换为万亿以保持单位一致
+trillion = 1000000000000
+
+// 获取各央行基础货币数据
+fed = fed_active ? request.security("USCBBS", timeframe.period, close, currency=currency.USD) : 0
+rrp = rrp_active ? request.security("RRPONTSYD", timeframe.period, close, currency=currency.USD) : 0
+tga = tga_active ? request.security("WTREGEN", timeframe.period, close, currency=currency.USD) : 0
+ecb = ecb_active ? request.security("EUCBBS * EURUSD", timeframe.period, close, currency=currency.USD) : 0
+pbc = pbc_active ? request.security("CNCBBS * CNYUSD", timeframe.period, close, currency=currency.USD) : 0
+boj = boj_active ? request.security("JPCBBS * JPYUSD", timeframe.period, close, currency=currency.USD) : 0
+
+fed_display = fed / trillion
+tga_display = tga / trillion
+rrp_display = rrp / trillion
+ecb_display = ecb / trillion
+pbc_display = pbc / trillion
+boj_display = boj / trillion
+
+// 计算总央行基础货币（减去RRP和TGA）
+central_bank_total = ((na(fed) ? 0 : fed) - (na(rrp) ? 0 : rrp) - (na(tga) ? 0 : tga) + (na(boj) ? 0 : boj) + (na(pbc) ? 0 : pbc) + (na(ecb) ? 0 : ecb)) / trillion
+central_bank_sma = ta.sma(central_bank_total, sma_input)
+central_bank_display = central_bank_sma
+
+// 在主图上绘制央行基础货币和M2曲线
+plot(central_bank_display, color=color.rgb(65, 105, 225), linewidth=1, title="Central Bank Base Money", offset = offset_info)
+// Central Banks
+plot(fed_active ? fed_display : na, title="FED", color=color.rgb(65, 105, 225), display=display.status_line)
+plot(tga_active ? tga_display : na, title="TGA", color=color.rgb(220, 20, 60), display=display.status_line)
+plot(rrp_active ? rrp_display : na, title="RRP", color=color.rgb(255, 140, 0), display=display.status_line)
+plot(ecb_active ? ecb_display : na, title="ECB", color=color.rgb(0, 128, 0), display=display.status_line)
+plot(pbc_active ? pbc_display : na, title="PBC", color=color.rgb(178, 34, 34), display=display.status_line)
+plot(boj_active ? boj_display : na, title="BOJ", color=color.rgb(75, 0, 130), display=display.status_line)

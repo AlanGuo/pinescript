@@ -1,0 +1,105 @@
+//@version=6
+indicator("Global Liquidity Index", overlay=false)
+
+// 输入设置
+fed_active = input(true, title = "FED (Federal Reserve System)")
+tga_active = input(true, title = "TGA (Treasury General Account)")
+rrp_active = input(true, title = "RRP (Reverse Repurchase Agreements)")
+ecb_active = input(true, title = "ECB (European Central Bank)")
+pbc_active = input(true, title = "PBC (People's Bank of China)")
+boj_active = input(true, title = "BOJ (Bank of Japan)")
+other_active = input(false, title = "Other Central Banks")
+usa_active = input(false, title = "USM2 (USA Money Supply)")
+europe_active = input(false, title = "EUM2 (Europe Money Supply)")
+china_active = input(false, title = "CNM2 (China Money Supply)")
+japan_active = input(false, title = "JPM2 (Japan Money Supply)")
+other_m2_active = input(false, title = "Other Countries M2")
+sma_input = input(defval = 1, title = "SMA Length")
+roc_input = input(defval = 1, title = "ROC Length")
+show_efficiency = input(true, title = "Show Transmission Efficiency")
+
+// 转换为万亿以保持单位一致
+trillion = 1000000000000
+
+// 获取各央行基础货币数据
+fed = fed_active ? request.security("USCBBS", "D", close, currency=currency.USD) : 0
+rrp = rrp_active ? request.security("RRPONTSYD", "D", close, currency=currency.USD) : 0
+tga = tga_active ? request.security("WTREGEN", "D", close, currency=currency.USD) : 0
+ecb = ecb_active ? request.security("EUCBBS * EURUSD", "D", close, currency=currency.USD) : 0
+pbc = pbc_active ? request.security("CNCBBS * CNYUSD", "D", close, currency=currency.USD) : 0
+boj = boj_active ? request.security("JPCBBS * JPYUSD", "D", close, currency=currency.USD) : 0
+boe = other_active ? request.security("GBCBBS * GBPUSD", "D", close, currency=currency.USD) : 0
+boc = other_active ? request.security("CACBBS * CADUSD", "D", close, currency=currency.USD) : 0
+rba = other_active ? request.security("AUCBBS * AUDUSD", "D", close, currency=currency.USD) : 0
+rbi = other_active ? request.security("INCBBS * INRUSD", "D", close, currency=currency.USD) : 0
+snb = other_active ? request.security("CHCBBS * CHFUSD", "D", close, currency=currency.USD) : 0
+cbr = other_active ? request.security("RUCBBS * RUBUSD", "D", close, currency=currency.USD) : 0
+bcb = other_active ? request.security("BRCBBS * BRLUSD", "D", close, currency=currency.USD) : 0
+bok = other_active ? request.security("KRCBBS * KRWUSD", "D", close, currency=currency.USD) : 0
+rbzn = other_active ? request.security("NZCBBS * NZDUSD", "D", close, currency=currency.USD) : 0
+sr = other_active ? request.security("SECBBS * SEKUSD", "D", close, currency=currency.USD) : 0
+bnm = other_active ? request.security("MYCBBS * MYRUSD", "D", close, currency=currency.USD) : 0
+
+// 获取各国M2数据
+usa = usa_active ? request.security("ECONOMICS:USM2", "D", close, currency=currency.USD) : 0
+eu = europe_active ? request.security("ECONOMICS:EUM2 * EURUSD", "D", close, currency=currency.USD) : 0
+china = china_active ? request.security("ECONOMICS:CNM2 * CNYUSD", "D", close, currency=currency.USD) : 0
+japan = japan_active ? request.security("ECONOMICS:JPM2 * JPYUSD", "D", close, currency=currency.USD) : 0
+uk = other_m2_active ? request.security("ECONOMICS:GBM2 * GBPUSD", "D", close, currency=currency.USD) : 0
+canada = other_m2_active ? request.security("ECONOMICS:CAM2 * CADUSD", "D", close, currency=currency.USD) : 0
+australia = other_m2_active ? request.security("ECONOMICS:AUM3 * AUDUSD", "D", close, currency=currency.USD) : 0
+india = other_m2_active ? request.security("ECONOMICS:INM2 * INRUSD", "D", close, currency=currency.USD) : 0
+switzerland = other_m2_active ? request.security("ECONOMICS:CHM2 * CHFUSD", "D", close, currency=currency.USD) : 0
+russia = other_m2_active ? request.security("ECONOMICS:RUM2 * RUBUSD", "D", close, currency=currency.USD) : 0
+brazil = other_m2_active ? request.security("ECONOMICS:BRM2 * BRLUSD", "D", close, currency=currency.USD) : 0
+korea = other_m2_active ? request.security("ECONOMICS:KRM2 * KRWUSD", "D", close, currency=currency.USD) : 0
+mexico = other_m2_active ? request.security("ECONOMICS:MXM2 * MXNUSD", "D", close, currency=currency.USD) : 0
+indonesia = other_m2_active ? request.security("ECONOMICS:IDM2 * IDRUSD", "D", close, currency=currency.USD) : 0
+africa = other_m2_active ? request.security("ECONOMICS:ZAM2 * ZARUSD", "D", close, currency=currency.USD) : 0
+malaysia = other_m2_active ? request.security("ECONOMICS:MYM2 * MYRUSD", "D", close, currency=currency.USD) : 0
+sweden = other_m2_active ? request.security("ECONOMICS:SEM2 * SEKUSD", "D", close, currency=currency.USD) : 0
+
+// 计算总央行基础货币（减去RRP和TGA）
+central_bank_total = (fed - rrp - tga + boj + pbc + boe + ecb + rbi + boc + rba + snb + cbr + bcb + bok + rbzn + sr + bnm) / trillion
+central_bank_sma = ta.sma(central_bank_total, sma_input)
+central_bank_roc = ta.roc(central_bank_total, roc_input)
+central_bank_sma_roc = ta.sma(central_bank_roc, sma_input)
+iff = roc_input > 1 ? true : false
+central_bank_display = iff ? central_bank_sma_roc : central_bank_sma
+
+// 计算总M2
+m2_total = (usa + eu + china + japan + uk + canada + australia + india + switzerland + russia + brazil + korea + mexico + indonesia + africa + malaysia + sweden) / trillion
+m2_sma = ta.sma(m2_total, sma_input)
+m2_roc = ta.roc(m2_total, roc_input)
+m2_sma_roc = ta.sma(m2_roc, sma_input)
+m2_display = iff ? m2_sma_roc : m2_sma
+
+// 计算传导效率 = 基础货币 / M2
+// 避免除以零
+efficiency = m2_total != 0 ? central_bank_total / m2_total : 0
+efficiency_sma = ta.sma(efficiency, sma_input)
+efficiency_roc = ta.roc(efficiency, roc_input)
+efficiency_sma_roc = ta.sma(efficiency_roc, sma_input)
+efficiency_display = iff ? efficiency_sma_roc : efficiency_sma
+
+// 在主图上绘制央行基础货币和M2曲线
+plot(central_bank_display, color=color.rgb(65, 105, 225), linewidth=2, title="Central Bank Base Money")
+plot(m2_display, color=color.rgb(0, 128, 0), linewidth=2, title="Global M2")
+
+// 创建附图显示传导效率
+efficiency_plot = show_efficiency ? efficiency_display : na
+plotshape(efficiency_plot, title="Transmission Efficiency", location=location.bottom, color=color.rgb(255, 140, 0), style=shape.circle, size=size.tiny)
+plot(efficiency_plot, color=color.rgb(255, 140, 0), linewidth=2, title="Transmission Efficiency")
+
+// 在状态栏显示各组件
+// 央行基础货币组件
+var central_bank_label = "CB: " + str.tostring(central_bank_display, "#.##") + " T"
+// M2组件
+var m2_label = "M2: " + str.tostring(m2_display, "#.##") + " T"
+// 传导效率
+var efficiency_label = "Efficiency: " + str.tostring(efficiency_display, "#.##")
+
+// 显示标签
+label.new(bar_index, high, text=central_bank_label + "\n" + m2_label + "\n" + efficiency_label, 
+     color=color.rgb(0, 0, 0, 80), style=label.style_label_down, 
+     textcolor=color.white, size=size.small)

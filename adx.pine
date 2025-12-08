@@ -1,0 +1,61 @@
+//@version=6
+strategy("ADX回测", initial_capital = 10000, process_orders_on_close = true, default_qty_type = strategy.percent_of_equity, default_qty_value = 100, overlay=false, margin_long = 50)
+
+adxlen = input(14, title="ADX Smoothing", group="ADX")
+dilen = input(14, title="DI Length", group="ADX")
+adxThreshold = input.int(25, title="ADX In Threshold", group="ADX")
+ignore_direction = input.bool(true, title = "忽略adx方向", group = "ADX")
+
+// 定义回测时间段
+start_date = input.time(timestamp("1 Feb 2018 00:00 +0800"), "Date", group = "回测")
+end_date = input.time(timestamp("31 Dec 2099 00:00 +0800"), "Date", group = "回测")
+
+ma_length = input.int(60, title="均线", group = "回测")
+ma_option = input.string(title="均线类型", defval="SMA", options=["EMA", "SMA", "RMA"], group = "回测")
+buy_over_ma = input.bool(true, title="仅在均线之上买入", group = "回测")
+
+// 计算ADX
+[plus_di, minus_di, adxSig] = ta.dmi(dilen, adxlen)
+
+// 判断是否处于上涨趋势
+uptrend = ignore_direction or (not ignore_direction and plus_di > minus_di)
+
+ma_value = ma_option == "SMA" ? ta.sma(close, ma_length) : (ma_option == "EMA" ? ta.ema(close, ma_length) : ta.rma(close, ma_length))
+plot(buy_over_ma ? ma_value : na, title="MA", linewidth = 2, color=color.blue, force_overlay = true)
+plot(adxSig, color=color.orange, title="ADX")
+hline(adxThreshold, "ADX Threshold", color=color.silver)
+plot(plus_di, color = color.rgb(255, 0, 0, 60))
+plot(minus_di, color = color.rgb(0, 255, 0, 60))
+// 检查当前时间是否在回测时间段内
+in_date_range = (time >= start_date) and (time <= end_date)
+// 定义买入和卖出条件
+// 这里以其他品种的收盘价格超过某个值作为条件示例
+
+buy_condition = false
+sell_condition = false
+adx_crossover = ta.crossover(adxSig, adxThreshold)
+adx_crossunder = ta.crossunder(adxSig, adxThreshold)
+ma_crossunder = ta.crossunder(close, ma_value * 0.99)
+ma_crossover = ta.crossover(close, ma_value)
+
+// 检查ADX是否大于阈值
+adx_above_threshold = adxSig > adxThreshold
+
+if in_date_range
+    // 原始条件：ADX交叉上穿阈值时开仓
+    if (not buy_over_ma or (buy_over_ma and close > ma_value))
+        buy_condition := uptrend and adx_crossover
+    
+    // 新增条件：价格上穿均线且ADX已经大于阈值时开仓
+    if buy_over_ma and ma_crossover and adx_above_threshold and uptrend
+        buy_condition := true
+
+if strategy.position_size > 0
+    sell_condition := (not buy_over_ma and adx_crossunder) or (buy_over_ma and (ma_crossunder or adx_crossunder))
+// 执行买入操作
+if (buy_condition)
+    strategy.entry("Buy", strategy.long, comment = "Buy")
+
+// 执行卖出操作
+if (sell_condition)
+    strategy.close("Buy", comment = "Sell")

@@ -1,0 +1,78 @@
+//@version=6
+strategy("BTC周末交易策略", initial_capital = 10000, default_qty_type = strategy.cash, default_qty_value = 10000, overlay=true)
+
+// 用户输入
+btc_symbol = input.string("BINANCE:BTCUSDT", title="BTC", group="标的")
+position_size_pct = input.float(100, title="仓位大小(%)", minval=1, maxval=100, group="策略参数") / 100
+take_profit_pct = input.float(0, title="止盈百分比", minval=0, step=0.1, group="策略参数") / 100
+stop_loss_pct = input.float(0, title="止损百分比", minval=0, step=0.1, group="策略参数") / 100
+min_weekend_rise_pct = input.float(0.5, title="周末最小涨幅(%)", minval=0, step=0.1, group="策略参数") / 100
+
+// 时间设置
+friday_hour = input.int(17, title="周五小时 (24小时制)", minval=0, maxval=23, group="时间设置")
+sunday_hour = input.int(17, title="周日小时 (24小时制)", minval=0, maxval=23, group="时间设置")
+
+// 回测日期范围
+start_date = input.time(timestamp("1 Jan 2018"), "开始日期", group="回测设置")
+end_date = input.time(timestamp("31 Dec 2099"), "结束日期", group="回测设置")
+
+// 检查当前时间是否在回测时间段内
+in_date_range = time >= start_date and time <= end_date
+
+// 获取BTC价格
+btc_price = request.security(btc_symbol, timeframe.period, close)
+
+// 获取当前时间信息
+current_hour = hour(time)
+current_day_of_week = dayofweek(time)  // 1 (周日) 到 7 (周六)
+
+// 定义时间点
+is_sunday_5pm = current_day_of_week == 1 and current_hour == sunday_hour
+is_friday_5pm = current_day_of_week == 5 and current_hour == friday_hour
+
+// 跟踪周五价格
+var float friday_price = 0.0
+if is_friday_5pm
+    friday_price := btc_price
+
+// 计算周末涨幅
+weekend_rise_pct = is_sunday_5pm ? (btc_price - friday_price) / friday_price * 100 : 0
+weekend_rise = is_sunday_5pm and friday_price > 0 and btc_price > friday_price * (1 + min_weekend_rise_pct)
+
+// 绘制价格和周五价格参考线
+plot(btc_price, title="BTC价格", color=color.blue)
+plot(friday_price > 0 ? friday_price : na, title="周五价格", color=color.orange, style=plot.style_circles)
+
+// 执行交易逻辑
+if is_sunday_5pm and in_date_range and weekend_rise
+    strategy.entry("Buy", strategy.long, qty=strategy.equity * position_size_pct / btc_price, comment="周末上涨买入")
+    
+    // 如果设置了止盈止损
+    if take_profit_pct > 0 or stop_loss_pct > 0
+        entry_price = btc_price
+        take_profit_price = take_profit_pct > 0 ? entry_price * (1 + take_profit_pct) : na
+        stop_loss_price = stop_loss_pct > 0 ? entry_price * (1 - stop_loss_pct) : na
+        strategy.exit("TP/SL", "Buy", limit=take_profit_price, stop=stop_loss_price)
+
+if is_friday_5pm and strategy.position_size > 0
+    strategy.close("Buy", comment="周五卖出")
+
+// 添加标记
+plotshape(is_sunday_5pm and in_date_range and weekend_rise, title="买入信号", location=location.belowbar, color=color.green, style=shape.triangleup, size=size.small)
+plotshape(is_friday_5pm and strategy.position_size > 0, title="卖出信号", location=location.abovebar, color=color.red, style=shape.triangledown, size=size.small)
+
+// 显示周末涨幅
+var label weekend_rise_label = na
+if is_sunday_5pm and friday_price > 0
+    label.delete(weekend_rise_label)
+    weekend_rise_label := label.new(bar_index, btc_price, "周末涨幅: " + str.tostring(weekend_rise_pct, "#.##") + "%", color=weekend_rise ? color.green : color.red,style=label.style_label_down,textcolor=color.white)
+
+// 显示策略信息
+var table info_table = table.new(position.top_right, 2, 3, color.new(color.blue, 80))
+if barstate.islastconfirmedhistory
+    table.cell(info_table, 0, 0, "策略", bgcolor=color.new(color.blue, 80), text_color=color.white)
+    table.cell(info_table, 1, 0, "BTC周末交易", bgcolor=color.new(color.blue, 80), text_color=color.white)
+    table.cell(info_table, 0, 1, "规则", bgcolor=color.new(color.blue, 90), text_color=color.white)
+    table.cell(info_table, 1, 1, "周末上涨时在周日" + str.tostring(sunday_hour) + "点买入，周五" + str.tostring(friday_hour) + "点卖出", bgcolor=color.new(color.blue, 90), text_color=color.white)
+    table.cell(info_table, 0, 2, "最小涨幅", bgcolor=color.new(color.blue, 90), text_color=color.white)
+    table.cell(info_table, 1, 2, str.tostring(min_weekend_rise_pct * 100, "#.##") + "%", bgcolor=color.new(color.blue, 90), text_color=color.white)

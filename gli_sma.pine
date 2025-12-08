@@ -1,0 +1,164 @@
+//@version=6
+strategy("流动性均线交叉策略", default_qty_type = strategy.percent_of_equity, initial_capital = 10000, default_qty_value = 100, margin_long = 50, overlay = false)
+
+// 用户输入 - 策略参数
+sma_length = input.int(90, title="均线周期", minval=1, group="策略参数")
+hold_sma_length = input.int(90, title="商品均线周期", minval=1, group="策略参数")
+cross_offset_pct = input.float(0.5, title="交叉偏移百分比(%)", minval=0.0, step=0.1, group="策略参数")
+
+// 入场条件选项
+entry_condition_type = input.string("央行流动性上穿均线", title="入场条件", options=["央行流动性上穿均线", "M2上穿均线", "央行流动性上穿均线 and M2上穿均线", "央行流动性上穿均线 or M2上穿均线"], group="入场条件")
+
+// 出场条件选项
+exit_condition_type = input.string("M2下穿均线", title="出场条件", options=["商品价格下穿均线", "M2下穿均线", "央行流动性下穿均线", "商品价格下穿均线 and M2下穿均线", "商品价格下穿均线 or M2下穿均线", "商品价格下穿均线 and 央行流动性下穿均线", "商品价格下穿均线 or 央行流动性下穿均线"], group="出场条件")
+
+fed_active = input(true, title = "FED (Federal Reserve System)", group = "央行流动性")
+tga_active = input(true, title = "TGA (Treasury General Account)", group = "央行流动性")
+rrp_active = input(true, title = "RRP (Reverse Repurchase Agreements)", group = "央行流动性")
+ecb_active = input(true, title = "ECB (European Central Bank)", group = "央行流动性")
+pbc_active = input(true, title = "PBC (People's Bank of China)", group = "央行流动性")
+boj_active = input(true, title = "BOJ (Bank of Japan)", group = "央行流动性")
+
+usa_active = input(true, title = "USM2 (USA Money Supply)", group = "M2")
+europe_active = input(true, title = "EUM2 (Europe Money Supply)", group = "M2")
+china_active = input(true, title = "CNM2 (China Money Supply)", group = "M2")
+japan_active = input(true, title = "JPM2 (Japan Money Supply)", group = "M2")
+
+// 回测日期范围
+start_date = input.time(timestamp("1 Jan 2000"), "开始日期", group="回测设置")
+end_date = input.time(timestamp("31 Dec 2099"), "结束日期", group="回测设置")
+
+// 检测当前时间是否在回测时间段内
+in_date_range = time >= start_date and time <= end_date
+
+// 转换为万亿单位，保持一致性
+trillion = 1000000000000
+
+// 获取GLI组件数据
+fed = fed_active ? request.security("USCBBS", timeframe.period, close, currency=currency.USD) : 0
+rrp = rrp_active ? request.security("RRPONTSYD", timeframe.period, close, currency=currency.USD) : 0
+tga = tga_active ? request.security("WTREGEN", timeframe.period, close, currency=currency.USD) : 0
+ecb = ecb_active ? request.security("EUCBBS * EURUSD", timeframe.period, close, currency=currency.USD) : 0
+pbc = pbc_active ? request.security("CNCBBS * CNYUSD", timeframe.period, close, currency=currency.USD) : 0
+boj = boj_active ? request.security("JPCBBS * JPYUSD", timeframe.period, close, currency=currency.USD) : 0
+
+usa = usa_active ? request.security("ECONOMICS:USM2", timeframe.period, close, currency=currency.USD) : 0
+eu = europe_active ? request.security("ECONOMICS:EUM2 * EURUSD", timeframe.period, close, currency=currency.USD) : 0
+china = china_active ? request.security("ECONOMICS:CNM2 * CNYUSD", timeframe.period, close, currency=currency.USD) : 0
+japan = japan_active ? request.security("ECONOMICS:JPM2 * JPYUSD", timeframe.period, close, currency=currency.USD) : 0
+
+// 计算央行流动性
+central_bank_total = (na(fed) ? 0 : fed) - (na(rrp) ? 0 : rrp) - (na(tga) ? 0 : tga) + (na(boj) ? 0 : boj) + (na(pbc) ? 0 : pbc) + (na(ecb) ? 0 : ecb)
+central_bank_total_display = central_bank_total / trillion
+// 计算央行流动性的SMA
+central_bank_total_sma = ta.sma(central_bank_total, sma_length)
+// 计算偏移量
+central_bank_offset_value = central_bank_total_sma * (cross_offset_pct / 100)
+
+// 检测央行流动性穿越SMA
+crossover_central_bank_total_sma = ta.crossover(central_bank_total, central_bank_total_sma + central_bank_offset_value)  // 央行流动性上穿均线+偏移量 (买入信号)
+crossunder_central_bank_total_sma = ta.crossunder(central_bank_total, central_bank_total_sma - central_bank_offset_value)  // 央行流动性下穿均线-偏移量
+cb_above_sma = central_bank_total > central_bank_total_sma  // 央行流动性是否在均线以上
+
+// 计算M2
+m2 = (na(usa) ? 0 : usa) + (na(eu) ? 0 : eu) + (na(china) ? 0 : china) + (na(japan) ? 0 : japan)
+m2_display = m2 / trillion
+// 计算M2的SMA
+m2_sma = ta.sma(m2, sma_length)
+// 计算偏移量
+m2_offset_value = m2_sma * (cross_offset_pct / 100)
+
+// 检测M2穿越SMA
+crossover_m2_sma = ta.crossover(m2, m2_sma + m2_offset_value)  // M2上穿均线+偏移量
+crossunder_m2_sma = ta.crossunder(m2, m2_sma - m2_offset_value)  // M2下穿均线-偏移量(卖出信号)
+m2_above_sma = m2 > m2_sma  // M2是否在均线以上
+
+// 获取主商品数据和均线（使用当前图表）
+main_symbol_price = close
+main_symbol_sma = ta.sma(main_symbol_price, hold_sma_length)
+// 计算偏移量
+main_symbol_offset_value = main_symbol_sma * (cross_offset_pct / 100)
+main_below_sma = main_symbol_price < main_symbol_sma  // 主商品是否在均线以下
+crossunder_main_symbol_sma = ta.crossunder(main_symbol_price, main_symbol_sma - main_symbol_offset_value)  // 主商品下穿均线
+main_above_sma = main_symbol_price > main_symbol_sma  // 主商品是否在均线以上
+
+// 检测M2和央行流动性是否在均线以下
+m2_below_sma = m2 < m2_sma  // M2是否在均线以下
+cb_below_sma = central_bank_total < central_bank_total_sma  // 央行流动性是否在均线以下
+
+// 处理做多信号 - 根据选择的入场条件类型
+// 定义各种入场条件
+entry_cb_cross_up = crossover_central_bank_total_sma  // 央行流动性上穿均线
+entry_m2_cross_up = crossover_m2_sma  // M2上穿均线
+
+// 根据用户选择的入场条件类型确定最终入场条件
+entry_condition = false
+entry_comment = ""
+
+if entry_condition_type == "央行流动性上穿均线"
+    entry_condition := entry_cb_cross_up
+    entry_comment := "央行流动性上穿均线"
+    
+else if entry_condition_type == "M2上穿均线"
+    entry_condition := entry_m2_cross_up
+    entry_comment := "M2上穿均线"
+    
+else if entry_condition_type == "央行流动性上穿均线 and M2上穿均线"
+    // 当一个指标上穿均线时，检查另一个是否已经在均线以上
+    entry_condition := (entry_cb_cross_up and m2_above_sma) or (entry_m2_cross_up and cb_above_sma)
+    entry_comment := "央行流动性上穿均线 and M2上穿均线"
+    
+else if entry_condition_type == "央行流动性上穿均线 or M2上穿均线"
+    entry_condition := entry_cb_cross_up or entry_m2_cross_up
+    entry_comment := "央行流动性上穿均线 or M2上穿均线"
+
+// 如果满足入场条件，开仓
+if entry_condition and in_date_range
+    strategy.entry("long", strategy.long, comment=entry_comment)
+
+// 计算当前盈亏状态
+is_profitable = strategy.openprofit > 0
+
+// 处理出场信号 - 根据选择的出场条件类型
+// 定义各种出场条件
+exit_price_cross_down = crossunder_main_symbol_sma  // 商品价格下穿均线
+exit_m2_cross_down = crossunder_m2_sma  // M2下穿均线
+exit_cb_cross_down = crossunder_central_bank_total_sma  // 央行流动性下穿均线
+
+// 根据用户选择的出场条件类型确定最终出场条件
+exit_condition = false
+exit_comment = ""
+
+if exit_condition_type == "商品价格下穿均线"
+    exit_condition := exit_price_cross_down
+    exit_comment := "商品价格下穿均线"
+    
+else if exit_condition_type == "M2下穿均线"
+    exit_condition := exit_m2_cross_down
+    exit_comment := "M2下穿均线"
+    
+else if exit_condition_type == "央行流动性下穿均线"
+    exit_condition := exit_cb_cross_down
+    exit_comment := "央行流动性下穿均线"
+    
+else if exit_condition_type == "商品价格下穿均线 and M2下穿均线"
+    // 当一个指标下穿均线时，检查另一个是否已经在均线以下
+    exit_condition := (exit_price_cross_down and m2_below_sma) or (exit_m2_cross_down and main_below_sma)
+    exit_comment := "商品价格下穿均线 and M2下穿均线"
+    
+else if exit_condition_type == "商品价格下穿均线 or M2下穿均线"
+    exit_condition := exit_price_cross_down or exit_m2_cross_down
+    exit_comment := "商品价格下穿均线 or M2下穿均线"
+    
+else if exit_condition_type == "商品价格下穿均线 and 央行流动性下穿均线"
+    // 当一个指标下穿均线时，检查另一个是否已经在均线以下
+    exit_condition := (exit_price_cross_down and cb_below_sma) or (exit_cb_cross_down and main_below_sma)
+    exit_comment := "商品价格下穿均线 and 央行流动性下穿均线"
+    
+else if exit_condition_type == "商品价格下穿均线 or 央行流动性下穿均线"
+    exit_condition := exit_price_cross_down or exit_cb_cross_down
+    exit_comment := "商品价格下穿均线 or 央行流动性下穿均线"
+
+// 如果满足出场条件，平仓
+if exit_condition
+    strategy.close(id="long", comment=exit_comment)

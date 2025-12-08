@@ -1,0 +1,30 @@
+//@version=6
+indicator("央行流动性/M2", overlay=false)
+usa_active = input(true, title = "USA")
+europe_active = input(true, title = "Europe")
+china_active = input(true, title = "China")
+japan_active = input(true, title = "Japan")
+sma_input = input(defval = 1, title = "SMA Length")
+offset_input = input(defval = 0, title = "Offset")
+
+fed = usa_active ? request.security("USCBBS", timeframe.period, close, currency=currency.USD) : 0
+rrp = usa_active ? request.security("RRPONTSYD", timeframe.period, close, currency=currency.USD) : 0
+tga = usa_active ? request.security("WTREGEN", timeframe.period, close, currency=currency.USD) : 0
+ecb = europe_active ? request.security("EUCBBS * EURUSD", timeframe.period, close, currency=currency.USD) : 0
+pbc = china_active ? request.security("CNCBBS * CNYUSD", timeframe.period, close, currency=currency.USD) : 0
+boj = japan_active ? request.security("JPCBBS * JPYUSD", timeframe.period, close, currency=currency.USD) : 0
+
+usa = usa_active ? request.security("ECONOMICS:USM2", timeframe.period, close, currency=currency.USD) : 0
+eu = europe_active ? request.security("ECONOMICS:EUM2 * EURUSD", timeframe.period, close, currency=currency.USD) : 0
+china = china_active ? request.security("ECONOMICS:CNM2 * CNYUSD", timeframe.period, close, currency=currency.USD) : 0
+japan = japan_active ? request.security("ECONOMICS:JPM2 * JPYUSD", timeframe.period, close, currency=currency.USD) : 0
+
+
+m1_total = ((na(fed) ? 0 : fed) - (na(rrp) ? 0 : rrp) - (na(tga) ? 0 : tga) + (na(ecb) ? 0 : ecb) + (na(boj) ? 0 : boj) + (na(pbc) ? 0 : pbc))
+m2_total = ((na(usa) ? 0 : usa) + (na(eu) ? 0 : eu) + (na(china) ? 0 : china) + (na(japan) ? 0 : japan))
+
+// M1/M2 Ratio calculation
+m1m2_ratio = (m1_total > 0 and m2_total > 0) ? (m1_total / m2_total) : 0
+m1m2_ratio_sma = ta.sma(m1m2_ratio, sma_input)
+
+plot(m1m2_ratio_sma, title="央行流动性/M2", color=color.black, linewidth=1, offset=offset_input)

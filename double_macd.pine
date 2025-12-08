@@ -1,0 +1,165 @@
+//@version=6
+strategy(title = "Double MACD", initial_capital = 10000, calc_on_every_tick = true, process_orders_on_close = true, overlay=false)
+tr_fastMA = input.int(title="[Trending]Fast moving average", defval = 89, minval = 7)
+tr_slowMA = input.int(title="[Trending]Slow moving average", defval = 144, minval = 7)
+en_fastMA = input.int(title="[Energy]Fast moving average", defval = 13, minval = 7)
+en_slowMA = input.int(title="[Energy]Slow moving average", defval = 21, minval = 7)
+
+backtest = input.bool(title="开启回测", defval=false, group = "回测")
+// 定义回测时间段
+start_date = input.time(timestamp("1 Feb 2018 00:00 +0800"), "Date", group = "回测")
+end_date = input.time(timestamp("31 Dec 2099 00:00 +0800"), "Date", group = "回测")
+direction = input.string(title="方向", defval="多", options=["多", "空"], group = "回测")
+strategy_mode = input.string(title="策略模式", defval="顺势", options=["顺势", "背离"], group = "回测")
+
+divergence_group = "背离策略"
+div_pivot_len = input.int(title="枢轴长度", defval = 5, minval = 1, group = divergence_group)
+div_max_pivot_gap = input.int(title="价格与能量枢轴最大间隔(根K)", defval = 5, minval = 0, group = divergence_group)
+price_pivot_source = input.string(title="价格枢轴使用", defval="高低价", options=["高低价", "收盘价"], group = divergence_group)
+price_high_src = price_pivot_source == "收盘价" ? close : high
+price_low_src = price_pivot_source == "收盘价" ? close : low
+[tr_currMacd,_,_] = ta.macd(close[0], tr_fastMA, tr_slowMA, 9)
+plot(tr_currMacd, title = "[Trending]", style = plot.style_histogram, color = color.new(color.red, 80), linewidth = 3)
+[en_currMacd,_,_] = ta.macd(close[0], en_fastMA, en_slowMA, 9)
+plot(en_currMacd, title = "[Energy]", style = plot.style_histogram, color = color.new(color.black, 50), linewidth = 3)
+
+// 背离检测变量
+var float prev_price_low = na
+var float last_price_low = na
+var int prev_price_low_bar = na
+var int last_price_low_bar = na
+var float prev_price_high = na
+var float last_price_high = na
+var int prev_price_high_bar = na
+var int last_price_high_bar = na
+var float prev_macd_low = na
+var float last_macd_low = na
+var int prev_macd_low_bar = na
+var int last_macd_low_bar = na
+var float prev_macd_high = na
+var float last_macd_high = na
+var int prev_macd_high_bar = na
+var int last_macd_high_bar = na
+var int bull_divergence_bar = na
+var int bear_divergence_bar = na
+var bool bullish_divergence_signal = false
+var bool bearish_divergence_signal = false
+
+// reset signals each bar
+bullish_divergence_signal := false
+bearish_divergence_signal := false
+
+price_low_pivot = ta.pivotlow(price_low_src, div_pivot_len, div_pivot_len)
+if not na(price_low_pivot)
+    prev_price_low := last_price_low
+    prev_price_low_bar := last_price_low_bar
+    last_price_low := price_low_pivot
+    last_price_low_bar := bar_index - div_pivot_len
+
+price_high_pivot = ta.pivothigh(price_high_src, div_pivot_len, div_pivot_len)
+if not na(price_high_pivot)
+    prev_price_high := last_price_high
+    prev_price_high_bar := last_price_high_bar
+    last_price_high := price_high_pivot
+    last_price_high_bar := bar_index - div_pivot_len
+
+macd_low_pivot = ta.pivotlow(en_currMacd, div_pivot_len, div_pivot_len)
+if not na(macd_low_pivot)
+    prev_macd_low := last_macd_low
+    prev_macd_low_bar := last_macd_low_bar
+    last_macd_low := macd_low_pivot
+    last_macd_low_bar := bar_index - div_pivot_len
+
+macd_high_pivot = ta.pivothigh(en_currMacd, div_pivot_len, div_pivot_len)
+if not na(macd_high_pivot)
+    prev_macd_high := last_macd_high
+    prev_macd_high_bar := last_macd_high_bar
+    last_macd_high := macd_high_pivot
+    last_macd_high_bar := bar_index - div_pivot_len
+
+bull_condition = not na(prev_price_low) and not na(last_price_low) and not na(prev_macd_low) and not na(last_macd_low)
+bull_condition := bull_condition and not na(last_price_low_bar) and not na(last_macd_low_bar)
+bull_condition := bull_condition and last_price_low < prev_price_low and last_macd_low > prev_macd_low
+bull_condition := bull_condition and math.abs(last_price_low_bar - last_macd_low_bar) <= div_max_pivot_gap
+bull_condition := bull_condition and not na(en_currMacd[1]) and en_currMacd[1] < 0
+bull_condition := bull_condition and last_macd_low < 0 and prev_macd_low < 0
+if bull_condition and (na(bull_divergence_bar) or bull_divergence_bar != last_price_low_bar)
+    bull_divergence_bar := last_price_low_bar
+    bullish_divergence_signal := true
+
+bear_condition = not na(prev_price_high) and not na(last_price_high) and not na(prev_macd_high) and not na(last_macd_high)
+bear_condition := bear_condition and not na(last_price_high_bar) and not na(last_macd_high_bar)
+bear_condition := bear_condition and last_price_high > prev_price_high and last_macd_high < prev_macd_high
+bear_condition := bear_condition and math.abs(last_price_high_bar - last_macd_high_bar) <= div_max_pivot_gap
+bear_condition := bear_condition and not na(en_currMacd[1]) and en_currMacd[1] > 0
+bear_condition := bear_condition and last_macd_high > 0 and prev_macd_high > 0
+if bear_condition and (na(bear_divergence_bar) or bear_divergence_bar != last_price_high_bar)
+    bear_divergence_bar := last_price_high_bar
+    bearish_divergence_signal := true
+
+plotshape(strategy_mode == "背离" and bullish_divergence_signal, title="Bullish Divergence", style=shape.triangleup, color=color.new(color.green, 0), location=location.bottom, text="牛背", textcolor=color.gray, size = size.tiny)
+plotshape(strategy_mode == "背离" and bearish_divergence_signal, title="Bearish Divergence", style=shape.triangledown, color=color.new(color.red, 0), location=location.top, text="熊背", textcolor=color.gray, size = size.tiny)
+
+// 可视化枢轴点 - 使用背景色标记
+// 价格低点枢轴背景 (蓝色)
+// bgcolor(not na(price_low_pivot) ? color.new(color.blue, 90) : na, offset=-div_pivot_len, title="价格低点枢轴")
+// // 价格高点枢轴背景 (蓝色)
+// bgcolor(not na(price_high_pivot) ? color.new(color.blue, 90) : na, offset=-div_pivot_len, title="价格高点枢轴")
+// // MACD低点枢轴背景 (紫色)
+// bgcolor(not na(macd_low_pivot) ? color.new(color.purple, 92) : na, offset=-div_pivot_len, title="MACD低点枢轴")
+// // MACD高点枢轴背景 (紫色)
+// bgcolor(not na(macd_high_pivot) ? color.new(color.purple, 92) : na, offset=-div_pivot_len, title="MACD高点枢轴")
+
+// 标记枢轴间隔 - 当价格枢轴和MACD枢轴不在同一根K线时用橙色背景标记
+var int last_gap_bar = na
+if not na(price_low_pivot) and not na(last_macd_low_bar) and math.abs(bar_index - div_pivot_len - last_macd_low_bar) > 0 and math.abs(bar_index - div_pivot_len - last_macd_low_bar) <= div_max_pivot_gap
+    for i = 0 to math.abs(bar_index - div_pivot_len - last_macd_low_bar)
+        last_gap_bar := bar_index - div_pivot_len + (bar_index - div_pivot_len > last_macd_low_bar ? -i : i)
+
+if not na(price_high_pivot) and not na(last_macd_high_bar) and math.abs(bar_index - div_pivot_len - last_macd_high_bar) > 0 and math.abs(bar_index - div_pivot_len - last_macd_high_bar) <= div_max_pivot_gap
+    for i = 0 to math.abs(bar_index - div_pivot_len - last_macd_high_bar)
+        last_gap_bar := bar_index - div_pivot_len + (bar_index - div_pivot_len > last_macd_high_bar ? -i : i)
+
+// 绘制背离连线
+if bullish_divergence_signal and not na(prev_price_low_bar) and not na(last_price_low_bar)
+    line.new(x1=prev_macd_low_bar, y1=prev_macd_low, x2=last_macd_low_bar, y2=last_macd_low, color=color.new(color.green, 30), width=2)
+
+if bearish_divergence_signal and not na(prev_price_high_bar) and not na(last_price_high_bar)
+    line.new(x1=prev_macd_high_bar, y1=prev_macd_high, x2=last_macd_high_bar, y2=last_macd_high, color=color.new(color.red, 30), width=2)
+
+// 检查当前时间是否在回测时间段内
+in_date_range = (time >= start_date) and (time <= end_date)
+// 定义买入和卖出条件
+buy_condition = false
+sell_condition = false
+if backtest and in_date_range
+    if strategy_mode == "背离"
+        if direction == "空"
+            buy_condition := bearish_divergence_signal
+        else
+            buy_condition := bullish_divergence_signal
+    else
+        if direction == "空"
+            buy_condition := tr_currMacd < 0 and en_currMacd[0] <= en_currMacd[1] and en_currMacd[1] > en_currMacd[2]
+        else
+            buy_condition := tr_currMacd > 0 and en_currMacd[0] >= en_currMacd[1] and en_currMacd[1] < en_currMacd[2]
+
+if direction == "空"
+    sell_condition := strategy.position_size < 0 and en_currMacd[0] > en_currMacd[1]
+else
+    sell_condition := strategy.position_size > 0 and en_currMacd[0] < en_currMacd[1]
+
+
+// 执行买入操作
+if (buy_condition)
+    qty = strategy.equity / close
+    if qty < 0
+        qty := strategy.initial_capital / close
+    if direction == "空"
+        strategy.entry("Buy", strategy.short, qty = qty, comment = "Buy")
+    else
+        strategy.entry("Buy", strategy.long, qty = qty, comment = "Buy")
+
+// 执行卖出操作
+if (sell_condition)
+    strategy.close("Buy", comment = "Sell")

@@ -1,0 +1,723 @@
+//@version=6
+indicator("ETF轮动 (周动能)", overlay=false, max_lines_count=500, max_labels_count=500)
+
+// === Inputs ===
+symbol1 = input.symbol("SSE:518880", "Symbol 1", group="Universe")
+name1   = input.string("黄金ETF", "Label 1", group="Universe")
+symbol2 = input.symbol("SSE:513100", "Symbol 2", group="Universe")
+name2   = input.string("纳指ETF", "Label 2", group="Universe")
+symbol3 = input.symbol("SZSE:159915", "Symbol 3", group="Universe")
+name3   = input.string("创业板ETF", "Label 3", group="Universe")
+symbol4 = input.symbol("SSE:513520", "Symbol 4", group="Universe")
+name4   = input.string("日经ETF", "Label 4", group="Universe")
+rotationCount = input.int(3, "参与轮动资产数量", minval=1, maxval=4, group="Universe", tooltip="从上面填写的资产中取前N个参与轮动")
+pricePrecision  = input.int(3, "价格精确小数位", minval=0, maxval=6, group="Universe")
+var bool[] riskOffExclude = array.new_bool()   // 基准跌破均线时需要移除的品种
+
+// === Market filter (基准均线) ===
+useMarketFilter = input.bool(false, "启用基准均线过滤", group="Market Filter", tooltip="基准指数跌破指定SMA时，可将部分品种从轮动列表中移除")
+marketFrictionPct = input.float(0.0, "均线防摩擦系数(%)", minval=0.0, maxval=20.0, step=0.1, group="Market Filter", tooltip="收盘需高/低于均线一定比例才算上穿/下穿，降低震荡噪声")
+forceExitOnFilter = input.bool(true, "风险过滤直接清仓", group="Market Filter", tooltip="开启后，基准跌破SMA且当前持有被标记的风险品种时，立即按日线价格平仓；价格遵循换仓时点设置（收盘 / 次日开盘）")
+forceExitMode = input.string("次日开盘", "强平成交时点", options=["当日收盘", "次日开盘"], group="Market Filter", tooltip="强平触发时使用的成交价：固定当日收盘或次日开盘")
+marketFilterSymbol = input.symbol("SP:SPX", "基准符号", group="Market Filter", tooltip="默认使用SPX，可自定义为其它指数或资产")
+marketFilterLen = input.int(225, "基准SMA长度 (天)", minval=1, group="Market Filter", tooltip="默认225日SMA")
+// 选择在风险关闭时需要移除的品种
+exclude1OnDown = input.bool(false, "基准跌破均线时停用Symbol1", group="Market Filter")   // Symbol 1（黄金）
+exclude2OnDown = input.bool(true,  "基准跌破均线时停用Symbol2", group="Market Filter")   // Symbol 2（纳指ETF）
+exclude3OnDown = input.bool(true,  "基准跌破均线时停用Symbol3", group="Market Filter")   // Symbol 3（创业板ETF）
+exclude4OnDown = input.bool(true,  "基准跌破均线时停用Symbol4", group="Market Filter")   // Symbol 4（日经ETF）
+
+lookbackWeeks = input.int(4, "动量回顾(周)", minval=1, group="Logic")
+rebalanceMode = input.string("收盘", "换仓时点", options=["收盘", "开盘"], group="Logic", tooltip="选择在最后交易日收盘还是下一个交易日开盘进行换仓")
+useCloseRebalance = rebalanceMode == "收盘"
+minHoldWeeks = input.int(1, "最少持有周数", minval=1, group="Logic", tooltip="持仓至少保留N周后才允许换仓，1表示每周可换")
+initialCapital = input.float(10000, "Initial Capital", minval=0, group="Logic")
+backtestStart = input.time(timestamp("2014-12-25T00:00:00"), "Backtest Start", confirm=true, group="Logic", tooltip="Only evaluate trades on or after this date.")
+backtestEnd = input.time(timestamp("2099-12-31T23:59:59"), "Backtest End", confirm=true, group="Logic", tooltip="Only evaluate trades on or before this date.")
+weekTf = "W"
+bool inRange = time >= backtestStart and time <= backtestEnd
+// Display options
+showForceExitLabel = input.bool(true, "显示强平标注", group="Display")
+showMaxDdLabel   = input.bool(true, "显示最大回撤标注", group="Display")
+// Debug options
+enableDdDebug = input.bool(false, "启用回撤调试日志", group="Debug")
+enableEquityDebug = input.bool(false, "启用净值调试日志", group="Debug")
+enablePositionLog = input.bool(false, "启用仓位变动日志", group="Debug")
+enableMomentumLog = input.bool(false, "启用涨幅计算日志", group="Debug")
+enableFilterLog = input.bool(false, "启用基准过滤日志", group="Debug")
+
+formatDate(int ts) =>
+    yearStr = str.tostring(year(ts))
+    monthVal = month(ts)
+    dayVal = dayofmonth(ts)
+    monthStr = monthVal < 10 ? "0" + str.tostring(monthVal) : str.tostring(monthVal)
+    dayStr = dayVal < 10 ? "0" + str.tostring(dayVal) : str.tostring(dayVal)
+    str.format("{0}-{1}-{2}", yearStr, monthStr, dayStr)
+
+// 基准指数日线SMA（用于风险过滤）
+marketClose = request.security(marketFilterSymbol, "D", close, gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+// 用日线bar的起始日期避免因收盘时间跨时区导致日期+1
+marketDate = request.security(marketFilterSymbol, "D", time, gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+marketSma = request.security(marketFilterSymbol, "D", ta.sma(close, marketFilterLen), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+friction = marketFrictionPct * 0.01
+smaUp = marketSma * (1 + friction)
+smaDown = marketSma * (1 - friction)
+marketAboveSma = marketClose >= smaUp
+marketBelowSma = marketClose <= smaDown
+marketCrossUp = ta.crossover(marketClose, smaUp)
+marketCrossDown = ta.crossunder(marketClose, smaDown)
+if useMarketFilter and inRange and barstate.isconfirmed and (marketCrossUp or marketCrossDown)
+    dirTxt = marketCrossUp ? "上穿" : "下穿"
+    crossDateTxt = formatDate(marketDate)
+    if enableFilterLog
+        log.warning(str.format("基准 {0} {1} SMA{2}±{3,number,#.##}% 交易日 {4} 收盘 {5} 上沿 {6} 下沿 {7}", marketFilterSymbol, dirTxt, marketFilterLen, marketFrictionPct, crossDateTxt, str.tostring(marketClose, format.mintick), str.tostring(smaUp, format.mintick), str.tostring(smaDown, format.mintick)))
+
+// === Build symbol lists ===
+var string[] tickers = array.new_string()
+var string[] labels  = array.new_string()
+if barstate.isfirst
+    array.clear(riskOffExclude)
+    if str.length(symbol1) > 0
+        array.push(tickers, symbol1)
+        array.push(labels,  name1)
+        array.push(riskOffExclude, exclude1OnDown)
+    if str.length(symbol2) > 0
+        array.push(tickers, symbol2)
+        array.push(labels,  name2)
+        array.push(riskOffExclude, exclude2OnDown)
+    if str.length(symbol3) > 0
+        array.push(tickers, symbol3)
+        array.push(labels,  name3)
+        array.push(riskOffExclude, exclude3OnDown)
+    if str.length(symbol4) > 0
+        array.push(tickers, symbol4)
+        array.push(labels,  name4)
+        array.push(riskOffExclude, exclude4OnDown)
+    // Remove accidental empties
+    idx = array.size(tickers) - 1
+    while idx >= 0
+        sym = array.get(tickers, idx)
+        if str.length(sym) == 0
+            array.remove(tickers, idx)
+            array.remove(labels, idx)
+            array.remove(riskOffExclude, idx)
+        idx -= 1
+    // Trim to rotationCount (take first N assets)
+    while array.size(tickers) > rotationCount
+        array.pop(tickers)
+        array.pop(labels)
+        array.pop(riskOffExclude)
+
+assetCount = array.size(tickers)
+if assetCount == 0
+    runtime.error("请至少填写一个可交易品种")
+
+// Arrays reused each bar to store metrics
+var float[] momentum4w = array.new_float()
+var float[] weeklyRet  = array.new_float()
+var float[] weeklyClose = array.new_float()
+var float[] lookbackClose = array.new_float()
+var int[] displayOrder = array.new_int()
+// Per-symbol performance stats
+var float[] symCumReturn = array.new_float()   // 累计收益倍数（仅统计持仓周）
+var float[] symProfitSum = array.new_float()   // 周度盈利之和（小数，例如0.05=+5%）
+var float[] symLossSum   = array.new_float()   // 周度亏损之和（负数）
+var int[] symWinCount    = array.new_int()     // 盈利周次数
+var int[] symTradeCount  = array.new_int()     // 持仓周次数
+if barstate.isfirst
+    array.clear(momentum4w)
+    array.clear(weeklyRet)
+    array.clear(weeklyClose)
+    array.clear(lookbackClose)
+    array.clear(displayOrder)
+    array.clear(symCumReturn)
+    array.clear(symProfitSum)
+    array.clear(symLossSum)
+    array.clear(symWinCount)
+    array.clear(symTradeCount)
+    for i = 0 to assetCount - 1
+        array.push(momentum4w, na)
+        array.push(weeklyRet,  na)
+        array.push(weeklyClose, na)
+        array.push(lookbackClose, na)
+        array.push(displayOrder, i)
+        array.push(symCumReturn, 1.0)
+        array.push(symProfitSum, 0.0)
+        array.push(symLossSum,   0.0)
+        array.push(symWinCount,  0)
+        array.push(symTradeCount, 0)
+        // riskOffExclude will be filled earlier when tickers are built
+
+color0  = color.new(color.orange, 50)
+color1  = color.new(color.blue, 50)
+color2  = color.new(color.red, 50)
+color3  = color.new(color.purple, 50)
+getColor(int idx) =>
+    idx == 0 ? color0 : idx == 1 ? color1 : idx == 2 ? color2 : idx == 3 ? color3 : na
+
+priceScale() => math.pow(10.0, pricePrecision)
+roundPrice(float v) =>
+    na(v) ? na : math.round(v * priceScale()) / priceScale()
+fmtPrice(float v) =>
+    na(v) ? "N/A" : str.tostring(v)
+
+// 当前品种是否在风险过滤下被移除
+isSymbolEligible(int idx) =>
+    if not useMarketFilter
+        true
+    else if not marketBelowSma
+        true
+    else if idx >= array.size(riskOffExclude)
+        true
+    else
+        not array.get(riskOffExclude, idx)
+
+rankMomentum(int idx) =>
+    val = array.get(momentum4w, idx)
+    isSymbolEligible(idx) ? val : na
+
+sanitizedMomentum(float val) => na(val) ? -1e10 : val
+
+sortTableRowsByMomentum() =>
+    rows = array.size(displayOrder)
+    if rows >= 2
+        for i = 0 to rows - 2
+            bestPos = i
+            bestIdx = array.get(displayOrder, bestPos)
+            bestVal = sanitizedMomentum(rankMomentum(bestIdx))
+            for j = i + 1 to rows - 1
+                currIdx = array.get(displayOrder, j)
+                currVal = sanitizedMomentum(rankMomentum(currIdx))
+                if currVal > bestVal
+                    bestPos := j
+                    bestIdx := currIdx
+                    bestVal := currVal
+            if bestPos != i
+                tmp = array.get(displayOrder, i)
+                array.set(displayOrder, i, array.get(displayOrder, bestPos))
+                array.set(displayOrder, bestPos, tmp)
+
+// 周末换仓：检测当前bar是否本周最后一根或下周第一根
+barCloseTime = time_close
+weekCloseTime = request.security(syminfo.tickerid, weekTf, time_close, gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+isWeekLast = barCloseTime == weekCloseTime
+isWeekFirst = ta.change(time(weekTf)) != 0  // 新周首根（通常周一）
+rebalanceBarNoRt = useCloseRebalance ? (isWeekLast or barstate.islastconfirmedhistory) : (isWeekFirst or barstate.islastconfirmedhistory)
+rebalanceRealtime = useCloseRebalance ? (isWeekLast and barstate.isrealtime) : (isWeekFirst and barstate.isrealtime)
+rebalanceConfirmed = useCloseRebalance ? (isWeekLast and barstate.isconfirmed) : (isWeekFirst and barstate.isconfirmed)
+
+// Select best performer over lookback
+int bestIdx = na
+var int holdingIdx = na
+var int prevHoldingIdx = na
+var string prevHeldLabel = "未持仓"
+var float equity = initialCapital
+var string heldLabel = "未持仓"
+var bool holdingChanged = false
+var bool hadPositionPrev = false  // 上一次换仓前是否持仓，用于日志文案
+var float rebalancePriceSeries = na
+var float equityClosedSeries = initialCapital  // 以周收盘价结算后的净值（阶梯曲线）
+var float lastSellPrice = na
+var float lastBuyPrice = na
+var int holdingWeeks = 0
+var bool firstWeekMarkerDone = false
+var table infoTable = table.new(position.top_right, 9, assetCount + 1, border_width=1)
+var table ddTable = table.new(position.bottom_right, 2, 6, border_width=1)
+var int prevHoldingWeeksMsg = 0
+// 回撤计算相关变量
+var float peakEquity = initialCapital         // 净值高点
+var float equityLow = initialCapital          // 日内最低净值
+var float maxDrawdownSeries = 0.0             // 最大回撤
+var label maxDdLabel = na
+var float entryPrice = na                     // 开仓价格
+var float entryEquity = initialCapital        // 开仓时净值
+var float prevEntryPrice = na                 // 收盘换仓时保存旧仓的开仓价格
+var float prevEntryEquity = na                // 收盘换仓时保存旧仓的开仓净值
+var float holdingPnlSeries = na               // 持仓盈亏百分比
+var float lastCurrentDdLog = na               // 用于debug日志去重
+// Stats for Sharpe & annualized return
+var float sumWeeklyRet = 0.0
+var float sumWeeklyRetSq = 0.0
+var int weeksCount = 0
+// 换仓事件标记（跨块使用，先声明避免首周未声明的错误）
+bool switching = false
+bool entering = false
+bool exitingOnly = false
+bool switchEvent = false
+// 强制平仓状态（风险过滤触发后次日开盘平仓）
+var bool forceExitPending = false
+var int forceExitPendingIdx = na
+var int forceExitPendingDay = na
+var float forceExitPendingBasis = na
+var string forceExitPendingNote = ""
+
+var color weekRetColor = color.orange
+var float currentDrawdown = 0.0
+var float totalReturnPct = 0.0
+var float annReturn = 0.0
+var float sharpeAnnual = 0.0
+
+var label lastSwitch = na
+// 实时/历史提示开仓/换仓
+previewIdx = bestIdx
+bool previewSwitch = rebalanceRealtime and not na(previewIdx) and (na(holdingIdx) or previewIdx != holdingIdx)
+bool previewContinue = rebalanceRealtime and not na(previewIdx) and not na(holdingIdx) and previewIdx == holdingIdx
+bool showSwitchRealtime = previewSwitch or previewContinue
+bool showSwitchConfirmed = rebalanceConfirmed
+bool skipSwitchMsg = false
+
+newDay = ta.change(time("D")) != 0
+if inRange 
+    if rebalanceBarNoRt
+        // 动量排名，周数据准备
+        for i = 0 to assetCount - 1
+            sym = array.get(tickers, i)
+            // 本周周线收盘与最低价（仅在周末确认时写入）
+            prevWeekClose = request.security(sym, weekTf, close, gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+            weeklyPct = request.security(sym, weekTf, close / close[1] - 1, gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+            momentum4wPct = request.security(sym, weekTf, close / close[lookbackWeeks] - 1, gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+            lookbackWeeksClose = request.security(sym, weekTf, close[lookbackWeeks], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+            currWeekTs = request.security(sym, weekTf, time_close, gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+            lookbackWeekTs = request.security(sym, weekTf, time_close[lookbackWeeks], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+            if na(prevWeekClose) or na(weeklyPct)
+                continue  // skip symbols with insufficient history
+            lbl = array.get(labels, i)
+            currWeekDate = formatDate(currWeekTs)
+            lookbackWeekDate = formatDate(lookbackWeekTs)
+            weekLabel = useCloseRebalance ? "本周收盘" : "上周收盘"
+            if enableMomentumLog
+                log.info(str.format("Symbol: {0} ({1}) {2}({3}): {4} 本周涨幅: {5,number,#.##}% {6}周收盘({7}): {8} {6}周涨幅: {9,number,#.##}%", sym, lbl, weekLabel, currWeekDate, prevWeekClose, weeklyPct * 100, lookbackWeeks, lookbackWeekDate, lookbackWeeksClose, momentum4wPct * 100))
+            array.set(weeklyClose, i, prevWeekClose)
+            array.set(weeklyRet,  i, weeklyPct)
+            array.set(momentum4w, i, momentum4wPct)
+            array.set(lookbackClose, i, lookbackWeeksClose)
+
+        bestMomentum = -10e10
+        for i = 0 to assetCount - 1
+            mom = rankMomentum(i)
+            if not na(mom) and mom > bestMomentum
+                bestMomentum := mom
+                bestIdx := i
+
+    // === 风险过滤即时平仓逻辑（基准跌破且持有被标记风险资产时） ===
+    currDayStart = int(time("D"))
+    bool forceExitExecuted = false
+    bool filterActive = useMarketFilter and marketBelowSma
+    bool holdingRisky = not na(holdingIdx) and holdingIdx < array.size(riskOffExclude) and array.get(riskOffExclude, holdingIdx)
+    forceExitUseClose = forceExitMode == "当日收盘"
+
+    // 当日收盘平仓
+    if forceExitOnFilter and filterActive and holdingRisky and forceExitUseClose and not forceExitPending
+        exitSym = array.get(tickers, holdingIdx)
+        exitLabel = array.get(labels, holdingIdx)
+        exitPrice = roundPrice(request.security(exitSym, "D", close, gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off))
+        basisPrice = entryPrice
+        realized = not na(exitPrice) and not na(basisPrice) and basisPrice > 0 ? exitPrice / basisPrice - 1 : na
+        if not na(realized)
+            equity := equity * (1 + realized)
+        equityClosedSeries := equity
+        lastSellPrice := exitPrice
+        holdingChanged := true
+        prevHeldLabel := exitLabel
+        holdingIdx := na
+        heldLabel := "未持仓"
+        holdingWeeks := 0
+        entryPrice := na
+        rebalancePriceSeries := exitPrice
+        forceExitExecuted := true
+        // 标注强平（当日收盘执行）
+        if showForceExitLabel
+            exitTimeTxt = formatDate(time)
+            exitModeTxt = "收盘"
+            exitLblTxt = str.format("强平 {0}\n时间: {1} {2}\n价格: {3}", exitLabel, exitTimeTxt, exitModeTxt, fmtPrice(exitPrice))
+            label.new(bar_index, equity, exitLblTxt, color=color.new(color.red, 0), textcolor=color.white, style=label.style_label_down, size=size.small)
+        if enableFilterLog
+            log.error(str.format("风险过滤清仓: {0} @ {1}", exitLabel, fmtPrice(exitPrice)))
+
+    // 次日开盘平仓：记录计划，等到新交易日第一根bar执行
+    if forceExitOnFilter and filterActive and holdingRisky and not forceExitUseClose and not forceExitPending
+        forceExitPending := true
+        forceExitPendingIdx := holdingIdx
+        forceExitPendingDay := currDayStart
+        forceExitPendingBasis := entryPrice
+        forceExitPendingNote := "（次日开盘清仓）"
+
+    if forceExitPending and (currDayStart > forceExitPendingDay or (currDayStart == forceExitPendingDay and newDay))
+        exitSymIdx = forceExitPendingIdx
+        exitSym = array.get(tickers, exitSymIdx)
+        exitLabel = array.get(labels, exitSymIdx)
+        exitPrice = roundPrice(request.security(exitSym, "D", open, gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off))
+        basisPrice = forceExitPendingBasis
+        realized = not na(exitPrice) and not na(basisPrice) and basisPrice > 0 ? exitPrice / basisPrice - 1 : na
+        if not na(realized)
+            equity := equity * (1 + realized)
+        equityClosedSeries := equity
+        lastSellPrice := exitPrice
+        holdingChanged := true
+        prevHeldLabel := exitLabel
+        holdingIdx := na
+        heldLabel := "未持仓"
+        holdingWeeks := 0
+        entryPrice := na
+        rebalancePriceSeries := exitPrice
+        forceExitPending := false
+        forceExitPendingIdx := na
+        forceExitPendingDay := na
+        forceExitPendingBasis := na
+        forceExitExecuted := true
+        noteTxt = forceExitPendingNote
+        forceExitPendingNote := ""
+        // 标注强平（次日开盘执行）
+        if showForceExitLabel
+            exitTimeTxt = formatDate(time)
+            exitModeTxt = "开盘"
+            exitLblTxt = str.format("强平 {0}\n时间: {1} {2}\n价格: {3}", exitLabel, exitTimeTxt, exitModeTxt, fmtPrice(exitPrice))
+            label.new(bar_index, equity, exitLblTxt, color=color.new(color.red, 0), textcolor=color.white, style=label.style_label_down, size=size.small)
+        if enableFilterLog
+            log.error(str.format("风险过滤清仓: {0} @ {1} {2}", exitLabel, fmtPrice(exitPrice), noteTxt))
+
+    // 调仓/强平结算：仅在换仓或清仓时结算净值
+    if rebalanceConfirmed
+        bool hadForceExitThisBar = forceExitExecuted
+        prevHoldingIdx := holdingIdx
+        prevHeldLabel := not na(prevHoldingIdx) ? array.get(labels, prevHoldingIdx) : "未持仓"
+        hadPositionPrev := not na(prevHoldingIdx)
+        prevHoldingWeeksMsg := holdingWeeks
+        holdingChanged := false
+        rebalancePriceSeries := na
+
+        // 保存旧仓的开仓价格和净值(用于收盘换仓时计算回撤)
+        if hadPositionPrev
+            prevEntryPrice := entryPrice
+            prevEntryEquity := entryEquity
+        else
+            prevEntryPrice := na
+            prevEntryEquity := na
+
+        // Determine next holding
+        // weeksHeld 表示截至本周收盘已持有的完整周数（含本周）
+        int weeksHeld = hadPositionPrev ? holdingWeeks + 1 : 0
+        int nextIdx = bestIdx
+        bool holdLockActive = hadPositionPrev and not na(nextIdx) and weeksHeld < minHoldWeeks and isSymbolEligible(prevHoldingIdx)
+        if holdLockActive
+            nextIdx := prevHoldingIdx
+        bool hasCandidate = not na(nextIdx)
+        switching := hadPositionPrev and hasCandidate and nextIdx != prevHoldingIdx
+        exitingOnly := hadPositionPrev and not hasCandidate
+        entering := hasCandidate and (not hadPositionPrev or switching)
+        switchEvent := switching or entering or exitingOnly
+
+        // 递增持仓周计数（仅在持续持有同一标的且未触发换仓/平仓时）
+        if hadPositionPrev and not switching and not exitingOnly
+            holdingWeeks := weeksHeld
+
+        // Realize only when exiting current position (switch or exit)
+        if switching or exitingOnly
+            exitIdx = prevHoldingIdx
+            exitSym = array.get(tickers, exitIdx)
+            exitLabel = array.get(labels, exitIdx)
+            exitPrice = roundPrice(request.security(exitSym, "D", useCloseRebalance ? close : open, gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off))
+            basisPrice = entryPrice
+            realized = not na(exitPrice) and not na(basisPrice) and basisPrice > 0 ? exitPrice / basisPrice - 1 : na
+            if not na(realized)
+                equity := equity * (1 + realized)
+                // stats per trade
+                statsIdx = exitIdx
+                prevMul = array.get(symCumReturn, statsIdx)
+                array.set(symCumReturn, statsIdx, nz(prevMul, 1.0) * (1 + realized))
+                prevTrades = array.get(symTradeCount, statsIdx)
+                array.set(symTradeCount, statsIdx, prevTrades + 1)
+                if realized > 0
+                    array.set(symWinCount, statsIdx, array.get(symWinCount, statsIdx) + 1)
+                    array.set(symProfitSum, statsIdx, array.get(symProfitSum, statsIdx) + realized)
+                else if realized < 0
+                    array.set(symLossSum, statsIdx, array.get(symLossSum, statsIdx) + realized)
+                // 累计收益统计（以交易为粒度）
+                sumWeeklyRet += realized
+                sumWeeklyRetSq += realized * realized
+                weeksCount += 1
+            equityClosedSeries := equity
+            lastSellPrice := exitPrice
+            holdingWeeks := 0
+        else
+            // 持续持有，不结算，不改变净值
+            equityClosedSeries := equity
+            lastSellPrice := na
+
+        // 开仓/换仓后的入场（仅在有候选时赋值；无候选视为空仓）
+        if entering
+            nextBuyPrice  = roundPrice(request.security(array.get(tickers, nextIdx), "D", useCloseRebalance ? close : open, gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off))
+            entryPrice := nextBuyPrice
+            entryEquity := equity  // 记录开仓时净值用于低点计算
+            lastBuyPrice := nextBuyPrice
+        else if exitingOnly
+            entryPrice := na
+            entryEquity := equity
+            lastBuyPrice := na
+        else
+            // 无 entering/exit 但切换失败或空候选时不更新价格，避免"未持仓@price"
+            lastBuyPrice := na
+
+        // 仅在有成交价格时展示 rebalancePriceSeries
+        rebalancePriceSeries := switching or entering ? entryPrice : (exitingOnly ? lastSellPrice : na)
+        if not entering and not exitingOnly
+            rebalancePriceSeries := na
+
+        holdingIdx := hasCandidate ? nextIdx : na
+        heldLabel := not na(holdingIdx) ? array.get(labels, holdingIdx) : "未持仓"
+        holdingChanged := switchEvent or exitingOnly or entering
+    else
+        if not forceExitExecuted
+            equityClosedSeries := nz(equityClosedSeries[1], initialCapital)
+            rebalancePriceSeries := na
+            holdingChanged := false
+        switchEvent := false
+        entering := false
+        switching := false
+        exitingOnly := false
+
+    // === 回撤计算逻辑 ===
+    // 1. 每次卖出(换仓/强平)后更新净值高点
+    // 2. 根据持仓的日内低点计算日内最低净值
+    // 3. 当前回撤 = (日内最低净值 - 净值高点) / 净值高点
+    // 4. 收盘换仓:用旧仓计算完回撤后再换仓,新仓不计算换仓日回撤
+    // 5. 开盘换仓:用新仓计算换仓日回撤
+
+    // 在卖出时更新净值高点
+    if (switching or exitingOnly or forceExitExecuted) and barstate.isconfirmed
+        if equityClosedSeries > peakEquity
+            peakEquity := equityClosedSeries
+            equityLow := equityClosedSeries  // 新高点时重置最低净值
+            if enableEquityDebug
+                log.warning(str.format("净值新高: {0,number,#.##}", equityClosedSeries))
+
+    // 计算日内最低净值
+    // 收盘换仓/开仓日:用旧仓计算回撤(首次开仓时旧仓为空,不计算回撤)
+    if useCloseRebalance and rebalanceConfirmed
+        if not na(prevHoldingIdx)
+            // 有旧仓:用旧仓计算回撤
+            heldSymOld = array.get(tickers, prevHoldingIdx)
+            currCloseOld = roundPrice(request.security(heldSymOld, "D", close, gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off))
+            currLowOld = roundPrice(request.security(heldSymOld, "D", low, gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off))
+
+            // 持仓盈亏(基于旧仓)
+            holdingPnlSeries := not na(prevEntryPrice) and prevEntryPrice > 0 ? (currCloseOld / prevEntryPrice - 1) : na
+
+            // 用旧仓日内低点计算最低净值
+            if not na(currLowOld) and not na(prevEntryPrice) and prevEntryPrice > 0
+                lowReturn = currLowOld / prevEntryPrice - 1
+                equityLowToday = prevEntryEquity * (1 + lowReturn)
+                equityLow := equityLowToday
+            else
+                equityLow := equityClosedSeries
+        else
+            // 首次开仓:不计算回撤,直接用结算净值
+            holdingPnlSeries := na
+            equityLow := equityClosedSeries
+    // 开盘换仓或非换仓日:用当前持仓计算
+    else if not na(holdingIdx)
+        heldSym = array.get(tickers, holdingIdx)
+        currClose = roundPrice(request.security(heldSym, "D", close, gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off))
+        currLow = roundPrice(request.security(heldSym, "D", low, gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off))
+
+        // 持仓盈亏百分比
+        holdingPnlSeries := not na(entryPrice) and entryPrice > 0 ? (currClose / entryPrice - 1) : na
+
+        // 计算日内最低净值
+        if not na(currLow) and not na(entryPrice) and entryPrice > 0
+            lowReturn = currLow / entryPrice - 1
+            equityLowToday = entryEquity * (1 + lowReturn)
+            equityLow := equityLowToday
+        else
+            equityLow := equityClosedSeries
+    else
+        // 无持仓
+        holdingPnlSeries := na
+        equityLow := equityClosedSeries
+
+    // 计算当前回撤
+    if not na(peakEquity) and peakEquity > 0
+        currentDrawdown := (equityLow - peakEquity) / peakEquity
+    else
+        currentDrawdown := 0.0
+
+    // 更新最大回撤
+    prevMaxDd = nz(maxDrawdownSeries[1], 0.0)
+    bool isNewMaxDrawdown = currentDrawdown < prevMaxDd
+    if isNewMaxDrawdown
+        maxDrawdownSeries := currentDrawdown
+    else
+        maxDrawdownSeries := prevMaxDd
+
+    // 回撤调试日志
+    if enableDdDebug and barstate.isconfirmed and not na(currentDrawdown)
+        if na(lastCurrentDdLog) or currentDrawdown != lastCurrentDdLog
+            if currentDrawdown < 0
+                // 获取触发最低净值的价格和持仓标签
+                string lowPriceTxt = "N/A"
+                string ddHoldingLabel = heldLabel
+                if useCloseRebalance and rebalanceConfirmed and not na(prevHoldingIdx)
+                    // 收盘换仓日,使用旧仓的日内低点和旧仓标签
+                    heldSymOld = array.get(tickers, prevHoldingIdx)
+                    currLowOld = roundPrice(request.security(heldSymOld, "D", low, gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off))
+                    lowPriceTxt := fmtPrice(currLowOld)
+                    ddHoldingLabel := prevHeldLabel
+                else if not na(holdingIdx)
+                    // 其他情况使用当前持仓的日内低点
+                    heldSym = array.get(tickers, holdingIdx)
+                    currLow = roundPrice(request.security(heldSym, "D", low, gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off))
+                    lowPriceTxt := fmtPrice(currLow)
+                    ddHoldingLabel := heldLabel
+
+                if isNewMaxDrawdown
+                    // 最大回撤创新高,使用error级别
+                    log.error(str.format("当前回撤: {0,number,#.##}% | 最高净值: {1,number,#.##} | 回撤净值: {2,number,#.##} | 持仓: {3} | 低点价格: {4} | 刷新最大回撤", currentDrawdown * 100, peakEquity, equityLow, ddHoldingLabel, lowPriceTxt))
+                else
+                    // 普通回撤,使用warning级别
+                    log.warning(str.format("当前回撤: {0,number,#.##}% | 最高净值: {1,number,#.##} | 回撤净值: {2,number,#.##} | 持仓: {3} | 低点价格: {4}", currentDrawdown * 100, peakEquity, equityLow, ddHoldingLabel, lowPriceTxt))
+            lastCurrentDdLog := currentDrawdown
+
+    // 最大回撤标注
+    if isNewMaxDrawdown and showMaxDdLabel
+        if not na(maxDdLabel)
+            label.delete(maxDdLabel)
+        ddText = str.format("最大回撤刷新 {0,number,#.##}%", currentDrawdown * 100)
+        maxDdLabel := label.new(bar_index, equityClosedSeries, ddText, color=color.new(color.maroon, 0), textcolor=color.white, style=label.style_label_down)
+    else if not showMaxDdLabel and not na(maxDdLabel)
+        label.delete(maxDdLabel)
+        maxDdLabel := na
+
+    // 这里开始继续原有换仓提示等逻辑
+
+    // 调仓/持仓提示：确保回撤日志先输出
+    if showSwitchRealtime or showSwitchConfirmed
+        if not na(lastSwitch)
+            label.delete(lastSwitch)
+        msg = ""
+        bool isTrialEquityMsg = false
+        if showSwitchConfirmed
+            if switchEvent
+                sellTxt = na(lastSellPrice) ? "—" : fmtPrice(lastSellPrice)
+                buyTxt  = na(lastBuyPrice)  ? "—" : fmtPrice(lastBuyPrice)
+                if entering and not switching and not hadPositionPrev
+                    msg := str.format("开仓: {0}@{1}", heldLabel, buyTxt)
+                else if exitingOnly
+                    msg := str.format("平仓: {0}@{1}", prevHeldLabel, sellTxt)
+                else
+                    msg := str.format("换仓: {0}@{1} -> {2}@{3}", prevHeldLabel, sellTxt, heldLabel, buyTxt)
+            else 
+                if prevHoldingWeeksMsg == 0
+                    skipSwitchMsg := true
+                else
+                    contLbl = not na(holdingIdx) ? array.get(labels, holdingIdx) : "未持仓"
+                    trialPx = roundPrice(request.security(array.get(tickers, holdingIdx), "D", useCloseRebalance ? close : open, gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off))
+                    trialEquity = not na(trialPx) and not na(entryPrice) and entryPrice > 0 ? entryEquity * (trialPx / entryPrice) : na
+                    trialPxTxt = fmtPrice(trialPx)
+                    trialEqTxt = na(trialEquity) ? "N/A" : str.format("{0,number,#.##}", trialEquity)
+                    msg := useCloseRebalance ? str.format("收盘继续持仓: {0} | 收盘价格 {1} | 试算净值 {2}", contLbl, trialPxTxt, trialEqTxt) : str.format("下周开盘继续持仓: {0} | 开盘价格 {1} | 试算净值 {2}", contLbl, trialPxTxt, trialEqTxt)
+                    isTrialEquityMsg := true
+        else if previewSwitch
+            fromLbl = na(holdingIdx) ? "未持仓" : array.get(labels, holdingIdx)
+            toLbl = na(previewIdx) ? "未持仓" : array.get(labels, previewIdx)
+            msg := useCloseRebalance ? str.format("预计收盘换仓: {0} -> {1} @收盘", fromLbl, toLbl) : str.format("预计开盘换仓: {0} -> {1} @开盘", fromLbl, toLbl)
+        else if previewContinue
+            toLbl = array.get(labels, previewIdx)
+            msg := useCloseRebalance ? str.format("预计收盘继续持仓: {0}", toLbl) : str.format("预计开盘继续持仓: {0}", toLbl)
+        else
+            msg := useCloseRebalance ? "预计收盘持仓状态不变" : "预计开盘持仓状态不变"
+        if not skipSwitchMsg and str.length(msg) > 0
+            lastSwitch := label.new(bar_index, equityClosedSeries, msg, color=color.new(color.blue, 0), textcolor=color.white, style=label.style_label_up)
+            alert(msg, alert.freq_once_per_bar)
+            if isTrialEquityMsg
+                if enableEquityDebug
+                    log.warning(msg)
+            else
+                if enablePositionLog
+                    log.error(msg)
+
+    totalReturnPct := initialCapital > 0 ? (equityClosedSeries / initialCapital - 1) * 100 : na
+    weekRetColor := nz(getColor(holdingIdx), color.orange)
+    // Annualized return based on elapsed calendar time
+    msPerYear = 365.25 * 24 * 60 * 60 * 1000.0
+    elapsedYears = (time - backtestStart) / msPerYear
+    annReturn := elapsedYears > 0 and initialCapital > 0 and equityClosedSeries > 0 ? math.pow(equityClosedSeries / initialCapital, 1.0 / elapsedYears) - 1 : na
+    // Sharpe ratio using weekly returns accumulated
+    meanRet = weeksCount > 0 ? sumWeeklyRet / weeksCount : na
+    variance = weeksCount > 0 ? sumWeeklyRetSq / weeksCount - (meanRet * meanRet) : na
+    variance := variance < 0 ? 0 : variance
+    stdRet = not na(variance) ? math.sqrt(variance) : na
+    sharpeAnnual := weeksCount > 1 and stdRet > 0 ? (meanRet / stdRet) * math.sqrt(52) : na
+
+    // Update table display once per bar
+    if barstate.islastconfirmedhistory or barstate.isrealtime
+        table.cell(infoTable, 0, 0, "品种", text_color=color.white, bgcolor=color.new(color.blue, 40))
+        table.cell(infoTable, 1, 0, str.format("{0}周涨幅", lookbackWeeks), text_color=color.white, bgcolor=color.new(color.blue, 40))
+        table.cell(infoTable, 2, 0, "本周涨幅", text_color=color.white, bgcolor=color.new(color.blue, 40))
+        table.cell(infoTable, 3, 0, str.format("{0}周收盘", lookbackWeeks), text_color=color.white, bgcolor=color.new(color.blue, 40))
+        table.cell(infoTable, 4, 0, "周收盘", text_color=color.white, bgcolor=color.new(color.blue, 40))
+        table.cell(infoTable, 5, 0, "累计盈亏", text_color=color.white, bgcolor=color.new(color.blue, 40))
+        table.cell(infoTable, 6, 0, "胜率", text_color=color.white, bgcolor=color.new(color.blue, 40))
+        table.cell(infoTable, 7, 0, "盈亏比", text_color=color.white, bgcolor=color.new(color.blue, 40))
+        table.cell(infoTable, 8, 0, "过滤", text_color=color.white, bgcolor=color.new(color.blue, 40))
+        sortTableRowsByMomentum()
+        for rank = 0 to assetCount - 1
+            row = rank + 1
+            symIdx = array.get(displayOrder, rank)
+            lbl = array.get(labels, symIdx)
+            mom = array.get(momentum4w, symIdx)
+            wret = array.get(weeklyRet, symIdx)
+            cls = array.get(weeklyClose, symIdx)
+            lbCls = array.get(lookbackClose, symIdx)
+            isHeld = not na(holdingIdx) and holdingIdx == symIdx
+            blocked = not isSymbolEligible(symIdx)
+            bg = blocked ? color.new(color.gray, 80) : (isHeld ? color.new(color.orange, 50) : color.new(color.black, 0))
+            text_color = isHeld ? color.new(color.black, 0) : color.new(color.white, 0)
+            cumMul = array.get(symCumReturn, symIdx)
+            tradesCnt = array.get(symTradeCount, symIdx)
+            winsCnt = array.get(symWinCount, symIdx)
+            profSum = array.get(symProfitSum, symIdx)
+            lossSum = array.get(symLossSum, symIdx)
+            totalPctSym = (nz(cumMul, 1.0) - 1) * 100
+            winRateSym = tradesCnt > 0 ? winsCnt * 100.0 / tradesCnt : na
+            profitFactor = lossSum < 0 ? profSum / math.abs(lossSum) : na
+            table.cell(infoTable, 0, row, lbl, bgcolor=bg, text_color = text_color)
+            table.cell(infoTable, 1, row, str.tostring(mom * 100, format.mintick) + "%", bgcolor=bg, text_color = text_color)
+            table.cell(infoTable, 2, row, str.tostring(wret * 100, format.mintick) + "%", bgcolor=bg, text_color = text_color)
+            table.cell(infoTable, 3, row, str.tostring(lbCls, format.mintick), bgcolor=bg, text_color = text_color)
+            table.cell(infoTable, 4, row, str.tostring(cls, format.mintick), bgcolor=bg, text_color = text_color)
+            table.cell(infoTable, 5, row, str.format("{0,number,#.##}%", totalPctSym), bgcolor=bg, text_color = text_color)
+            table.cell(infoTable, 6, row, na(winRateSym) ? "N/A" : str.format("{0,number,#.##}%", winRateSym), bgcolor=bg, text_color = text_color)
+            table.cell(infoTable, 7, row, na(profitFactor) ? "N/A" : str.tostring(profitFactor, format.mintick), bgcolor=bg, text_color = text_color)
+            table.cell(infoTable, 8, row, blocked ? "停用" : "—", bgcolor=bg, text_color = text_color)
+        startText = formatDate(backtestStart)
+        endText = formatDate(backtestEnd)
+        table.cell(ddTable, 0, 0, "指标", text_color=color.white, bgcolor=color.new(color.blue, 40))
+        table.cell(ddTable, 1, 0, "数值", text_color=color.white, bgcolor=color.new(color.blue, 40))
+        table.cell(ddTable, 0, 1, "最大回撤", bgcolor=color.new(color.black, 0), text_color=color.white)
+        table.cell(ddTable, 1, 1, str.format("{0,number,#.##}%", maxDrawdownSeries * 100), text_color=color.red)
+        table.cell(ddTable, 0, 2, "总收益率", bgcolor=color.new(color.black, 0), text_color=color.white)
+        table.cell(ddTable, 1, 2, str.format("{0,number,#.##}%", nz(totalReturnPct, 0)), text_color=color.green)
+        table.cell(ddTable, 0, 3, "回测范围", bgcolor=color.new(color.black, 0), text_color=color.white)
+        table.cell(ddTable, 1, 3, str.format("{0} 至 {1}", startText, endText), text_color=color.black)
+        table.cell(ddTable, 0, 4, "年化收益率", bgcolor=color.new(color.black, 0), text_color=color.white)
+        table.cell(ddTable, 1, 4, na(annReturn) ? "N/A" : str.format("{0,number,#.##}%", annReturn * 100), text_color=color.black)
+        table.cell(ddTable, 0, 5, "夏普比率(年化)", bgcolor=color.new(color.black, 0), text_color=color.white)
+        table.cell(ddTable, 1, 5, na(sharpeAnnual) ? "N/A" : str.tostring(sharpeAnnual, format.mintick), text_color=color.black)
+else
+    holdingIdx := na
+    heldLabel := "未持仓"
+    entryPrice := na
+    holdingWeeks := 0
+
+plot(equityClosedSeries, title="Simulated Equity", color=color.teal, linewidth=2)
+plot(currentDrawdown * 100, title="Current Drawdown (%)", color=color.new(color.red, 70), linewidth=1, style=plot.style_area, display=display.all, format=format.price, precision=2)
+plot(maxDrawdownSeries * 100, title="Max Drawdown To Date (%)", color=color.new(color.red, 40), linewidth=1, style=plot.style_stepline, display=display.all, format=format.price, precision=2)
+plot(holdingPnlSeries * 100, title="Holding PnL (%)", color=weekRetColor, style=plot.style_columns)
+plot(totalReturnPct, title="Total Return (%)", color=color.new(color.teal, 30), display=display.status_line)
+
+firstWeekMarkerNeeded = inRange and not firstWeekMarkerDone and rebalanceConfirmed
+showSwitchMarker = rebalanceConfirmed and (holdingChanged or firstWeekMarkerNeeded)
+plotchar(showSwitchMarker and holdingIdx >= 0, title="Holding This Week", char="●", location=location.bottom, color=weekRetColor, size=size.tiny)
+if showSwitchMarker and inRange
+    firstWeekMarkerDone := true
+plot(rebalancePriceSeries, title="Rebalance Price", color=weekRetColor, display=display.status_line)

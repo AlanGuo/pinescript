@@ -1,0 +1,156 @@
+//@version=6
+strategy('温度计', initial_capital = 10000, default_qty_value = 100, default_qty_type = strategy.percent_of_equity, overlay = false, calc_on_every_tick = true, margin_long = 50)
+
+// adx
+adxlen = 14
+dilen = 14
+
+overSoldValue = input.int(30, title = '超卖', group = "划线")
+overBoughtValue = input.int(70, title = '超买', group = "划线")
+
+adxThreshold = input.int(25, title = 'ADX Threshold', group = 'ADX')
+
+// 定义回测时间段
+start_date = input.time(timestamp('1 Feb 2018 00:00 +0800'), 'Date', group = '回测')
+end_date = input.time(timestamp('31 Dec 2099 00:00 +0800'), 'Date', group = '回测')
+
+// 这个选项勾选则表示温度计高买低卖
+backtest = input.bool(true, title = '开启回测', group = '回测')
+high_temp = input.int(75, title = '温度计高温', group = '回测', step=5)
+low_temp = input.int(25, title = '温度计低温', group = '回测', step=5)
+bs_method = input.string(title = '买卖方式', defval = '高买低卖', options = ['高买低卖', '低买止损', '低买跌破卖', '低买均线卖'], group = '回测')
+temp_gap_method = input.string(title = '防摩擦方式', defval = '短均线', options = ['固定数值', '短均线'], group = '回测')
+temp_gap = input.int(1, title = '温度计防摩擦(固定)', group = '回测')
+temp_gap_ma_length = input.int(3, title = '温度计防摩擦(均线周期)', group = '回测')
+temp_take_profit = input.bool(false, title = '温度计止盈', group = '回测')
+take_profit_temp = input.int(60, title = '温度计止盈', group = '回测', step=5)
+ma_length = input.int(60, title = '均线', group = '回测')
+ma_option = input.string(title = '均线类型', defval = 'SMA', options = ['EMA', 'SMA', 'RMA'], group = '回测')
+price_diff_pct = input.float(5.0, title = '价格不高于均线(%)', group = '回测') / 100
+compound = input.bool(true, title = '余额复利', group = '回测')
+quantity = input.float(1.0, title = '固定数量', group = '回测')
+
+ma_value = ma_option == 'SMA' ? ta.sma(close, ma_length) : ma_option == 'EMA' ? ta.ema(close, ma_length) : ta.rma(close, ma_length)
+plot(bs_method == '低买均线卖' and backtest ? ma_value : na, title = 'MA', linewidth = 2, color = color.blue, force_overlay = true)
+
+// 使用二二温度计数值
+finalScore = input.source(title="二二温度计", defval=close)
+
+// 计算防摩擦短均线(基于温度计数值finalScore)
+temp_gap_ma = ma_option == 'SMA' ? ta.sma(finalScore, temp_gap_ma_length) : ma_option == 'EMA' ? ta.ema(finalScore, temp_gap_ma_length) : ta.rma(finalScore, temp_gap_ma_length)
+// 根据选择的方法确定实际使用的防摩擦值
+temp_gap_value = temp_gap_method == '固定数值' ? finalScore : temp_gap_ma
+
+// 绘制
+combimedPlot = plot(finalScore, title = 'MOScore', color = color.gray)
+plot(temp_gap_value, title = "friction MOScore", display = display.status_line)
+upperBand = hline(overBoughtValue, 'Overbought', color = color.gray)
+lowerBand = hline(overSoldValue, 'Oversold', color = color.gray)
+
+fill(upperBand, lowerBand, color = color.new(color.gray, 90), title = 'MOScore Background Fill')
+
+// 渐变着色
+midLinePlot = plot(50, color = na, editable = false, display = display.none)
+fill(combimedPlot, midLinePlot, 100, overBoughtValue, top_color = color.new(color.red, 0), bottom_color = color.new(color.red, 100), title = 'Overbought Gradient Fill')
+fill(combimedPlot, midLinePlot, overSoldValue, 0, top_color = color.new(color.blue, 100), bottom_color = color.new(color.navy, 0), title = 'Oversold Gradient Fill')
+
+// 计算ADX
+[plus_di, minus_di, adxSig] = ta.dmi(dilen, adxlen)
+plot(adxSig, color = color.orange, title = 'adx')
+plot(plus_di, title = 'plus_di', display = display.status_line, color = color.green)
+plot(minus_di, title = 'minus_di', display = display.status_line, color = color.red)
+hline(adxThreshold, 'ADX Threshold', color = color.orange)
+
+// 检查当前时间是否在回测时间段内
+in_date_range = time >= start_date and time <= end_date
+// 定义买入和卖出条件
+// 这里以其他品种的收盘价格超过某个值作为条件示例
+
+
+var bool breaked_high = false
+var bool breaked_low = false
+var bool crossed_ma = false
+var float dynamic_stop_loss = na
+buy_condition = false
+sell_condition = false
+
+// 根据防摩擦方式确定触发条件
+bool low_temp_triggered = false
+if temp_gap_method == '固定数值'
+    low_temp_triggered := finalScore <= (low_temp - temp_gap)
+else  // 短均线方式
+    low_temp_triggered := temp_gap_ma < low_temp
+
+if low_temp_triggered
+    breaked_low := true
+if backtest and in_date_range
+    if bs_method == "高买低卖"
+        buy_condition := finalScore >= high_temp
+    else if bs_method == "低买均线卖" and close >= ma_value and close / ma_value < 1 + price_diff_pct
+        // 右侧买入：从低到高突破温度计低温值
+        // buy_condition := breaked_low and finalScore > low_temp
+        buy_condition := finalScore < low_temp
+        if buy_condition
+            crossed_ma := false  // 重置均线穿越状态
+    else if bs_method == "低买止损" or bs_method == "低买跌破卖"
+        // 右侧买入
+        buy_condition := breaked_low and finalScore > low_temp
+        if buy_condition
+            breaked_high := false
+            // 根据防摩擦方式初始化动态止损点
+            if temp_gap_method == '固定数值'
+                dynamic_stop_loss := low_temp - temp_gap
+            else  // 短均线方式,记录当前的low_temp作为止损参考
+                dynamic_stop_loss := low_temp
+    // 低点突破失效
+    if breaked_low and finalScore > low_temp
+        breaked_low := false
+
+if strategy.position_size > 0
+    if finalScore >= high_temp
+        breaked_high := true
+    // 检查是否穿越均线（价格向上突破均线）
+    if close > ma_value
+        crossed_ma := true
+    
+    // 动态调整止损点(仅对低买止损和低买跌破卖策略)
+    // if bs_method == "低买止损" or bs_method == "低买跌破卖"
+    //     if finalScore > low_temp + temp_gap_value
+    //         // 温度计超过 low_temp + temp_gap_value,止损点更新为 low_temp
+    //         dynamic_stop_loss := low_temp
+    //     else if finalScore > low_temp and finalScore <= low_temp + temp_gap_value
+    //         // 温度计在 low_temp 到 low_temp + temp_gap_value 之间,保持原止损点
+    //         dynamic_stop_loss := low_temp - temp_gap_value
+    if bs_method == "高买低卖"
+        sell_condition := finalScore < low_temp and finalScore[1] >= low_temp
+    else if bs_method == "低买止损"
+        // 根据防摩擦方式判断止损
+        if temp_gap_method == '固定数值'
+            sell_condition := finalScore < dynamic_stop_loss
+        else  // 短均线方式
+            sell_condition := temp_gap_value < dynamic_stop_loss
+    else if bs_method == "低买均线卖"
+        sell_condition := close < ma_value * 0.99
+    else if bs_method == "低买跌破卖"
+        // 根据防摩擦方式判断止损
+        bool stop_loss_triggered = false
+        if temp_gap_method == '固定数值'
+            stop_loss_triggered := finalScore < dynamic_stop_loss
+        else  // 短均线方式
+            stop_loss_triggered := temp_gap_value < dynamic_stop_loss
+        sell_condition := (breaked_high and finalScore < high_temp) or stop_loss_triggered
+    // 止盈
+    if temp_take_profit and finalScore > take_profit_temp
+        sell_condition := true
+
+// 执行买入操作
+if buy_condition
+    // 固定数量
+    qty = quantity
+    if compound
+        qty := strategy.equity / close
+    strategy.entry('Buy', strategy.long, qty = qty, comment = 'Buy')
+
+// 执行卖出操作
+if sell_condition
+    strategy.close('Buy', comment = 'Sell')

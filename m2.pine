@@ -1,0 +1,51 @@
+//@version=6
+indicator("M2", overlay=true, scale = scale.left, precision = 6)
+
+// 输入设置
+usa_active = input(true, title = "USM2 (USA Money Supply)")
+europe_active = input(true, title = "EUM2 (Europe Money Supply)")
+china_active = input(true, title = "CNM2 (China Money Supply)")
+japan_active = input(true, title = "JPM2 (Japan Money Supply)")
+sma_input = input(defval = 1, title = "SMA Length")
+offset_input = input(0, title = "Offset")
+
+// 转换为万亿以保持单位一致
+trillion = 1000000000000
+
+// 获取各国M2数据
+usa = usa_active ? request.security("ECONOMICS:USM2", timeframe.period, close, currency=currency.USD, lookahead = barmerge.lookahead_off) : 0
+eu = europe_active ? request.security("ECONOMICS:EUM2 * EURUSD", timeframe.period, close, currency=currency.USD, lookahead = barmerge.lookahead_off) : 0
+china = china_active ? request.security("ECONOMICS:CNM2 * CNYUSD", timeframe.period, close, currency=currency.USD, lookahead = barmerge.lookahead_off) : 0
+japan = japan_active ? request.security("ECONOMICS:JPM2 * FX_IDC:JPYUSD", timeframe.period, close, currency=currency.USD, lookahead = barmerge.lookahead_off) : 0
+
+// 计算总M2
+m2_total = ((na(usa) ? 0 : usa) + (na(eu) ? 0 : eu) + (na(china) ? 0 : china) + (na(japan) ? 0 : japan)) / trillion
+m2_sma = ta.sma(m2_total, sma_input)
+m2_display = m2_sma
+
+// 计算各国M2
+usa_display = usa / trillion
+eu_display = eu / trillion
+china_display = china / trillion
+japan_display = japan / trillion
+
+// 在主图上绘制央行基础货币和M2曲线
+plot(m2_display, color=color.blue, linewidth=2, title="Global M2", offset = offset_input)
+plot(usa_active ? usa_display : na, title="USA", color=color.rgb(0, 128, 0), display=display.status_line)
+plot(europe_active ? eu_display : na, title="Europe", color=color.rgb(220, 20, 60), display=display.status_line)
+plot(china_active ? china_display : na, title="China", color=color.rgb(178, 34, 34), display=display.status_line)
+plot(japan_active ? japan_display : na, title="Japan", color=color.rgb(75, 0, 130), display=display.status_line)
+
+
+eu_raw = request.security("ECONOMICS:EUM2", timeframe.period, close, currency=currency.USD, lookahead = barmerge.lookahead_off)
+cn_raw = request.security("ECONOMICS:CNM2", timeframe.period, close, currency=currency.USD, lookahead = barmerge.lookahead_off)
+jp_raw = request.security("ECONOMICS:JPM2", timeframe.period, close, currency=currency.USD, lookahead = barmerge.lookahead_off)
+eurusd = request.security("EURUSD", timeframe.period, close, currency=currency.USD, lookahead = barmerge.lookahead_off)
+cnyusd = request.security("CNYUSD", timeframe.period, close, currency=currency.USD, lookahead = barmerge.lookahead_off)
+jpyusd = request.security("FX_IDC:JPYUSD", timeframe.period, close, currency=currency.USD, lookahead = barmerge.lookahead_off)
+plot(eu_raw / trillion, title = "eu_raw", display = display.status_line)
+plot(eurusd, title = "eurusd", display = display.status_line)
+plot(cn_raw / trillion, title = "cn_raw", display = display.status_line)
+plot(cnyusd, title = "cnyusd", display = display.status_line)
+plot(jp_raw * jpyusd / trillion, title = "jp_raw", display = display.status_line)
+plot(jpyusd, title = "jpyusd", display = display.status_line)
