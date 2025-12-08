@@ -217,6 +217,7 @@ var bool holdingChanged = false
 var bool hadPositionPrev = false  // 上一次换仓前是否持仓，用于日志文案
 var float rebalancePriceSeries = na
 var float equityClosedSeries = initialCapital  // 以周收盘价结算后的净值（阶梯曲线）
+var float equityDailySeries = initialCapital   // 以日线收盘价试算的净值（连续曲线）
 var float lastSellPrice = na
 var float lastBuyPrice = na
 var int holdingWeeks = 0
@@ -331,7 +332,7 @@ if inRange
             exitModeTxt = "收盘"
             exitLblTxt = str.format("强平 {0}\n时间: {1} {2}\n价格: {3}", exitLabel, exitTimeTxt, exitModeTxt, fmtPrice(exitPrice))
             label.new(bar_index, equity, exitLblTxt, color=color.new(color.red, 0), textcolor=color.white, style=label.style_label_down, size=size.small)
-        if enableFilterLog
+        if enablePositionLog
             log.error(str.format("风险过滤清仓: {0} @ {1}", exitLabel, fmtPrice(exitPrice)))
 
     // 次日开盘平仓：记录计划，等到新交易日第一根bar执行
@@ -373,7 +374,7 @@ if inRange
             exitModeTxt = "开盘"
             exitLblTxt = str.format("强平 {0}\n时间: {1} {2}\n价格: {3}", exitLabel, exitTimeTxt, exitModeTxt, fmtPrice(exitPrice))
             label.new(bar_index, equity, exitLblTxt, color=color.new(color.red, 0), textcolor=color.white, style=label.style_label_down, size=size.small)
-        if enableFilterLog
+        if enablePositionLog
             log.error(str.format("风险过滤清仓: {0} @ {1} {2}", exitLabel, fmtPrice(exitPrice), noteTxt))
 
     // 调仓/强平结算：仅在换仓或清仓时结算净值
@@ -482,6 +483,21 @@ if inRange
     // 3. 当前回撤 = (日内最低净值 - 净值高点) / 净值高点
     // 4. 收盘换仓:用旧仓计算完回撤后再换仓,新仓不计算换仓日回撤
     // 5. 开盘换仓:用新仓计算换仓日回撤
+
+    // === 日线浮动净值计算 ===
+    // 根据当前持仓的日线收盘价实时计算净值
+    if not na(holdingIdx)
+        heldSymDaily = array.get(tickers, holdingIdx)
+        dailyClose = roundPrice(request.security(heldSymDaily, "D", close, gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off))
+        if not na(dailyClose) and not na(entryPrice) and entryPrice > 0
+            dailyReturn = dailyClose / entryPrice - 1
+            equityDailySeries := entryEquity * (1 + dailyReturn)
+        else
+            equityDailySeries := equityClosedSeries
+    else
+        equityDailySeries := equityClosedSeries
+
+    // === 回撤计算（使用日线浮动净值的低点）===
 
     // 在卖出时更新净值高点
     if (switching or exitingOnly or forceExitExecuted) and barstate.isconfirmed
@@ -614,7 +630,7 @@ if inRange
                     trialEquity = not na(trialPx) and not na(entryPrice) and entryPrice > 0 ? entryEquity * (trialPx / entryPrice) : na
                     trialPxTxt = fmtPrice(trialPx)
                     trialEqTxt = na(trialEquity) ? "N/A" : str.format("{0,number,#.##}", trialEquity)
-                    msg := useCloseRebalance ? str.format("收盘继续持仓: {0} | 收盘价格 {1} | 试算净值 {2}", contLbl, trialPxTxt, trialEqTxt) : str.format("下周开盘继续持仓: {0} | 开盘价格 {1} | 试算净值 {2}", contLbl, trialPxTxt, trialEqTxt)
+                    msg := useCloseRebalance ? str.format("收盘继续持仓: {0} | 收盘价格 {1} | 浮动净值 {2}", contLbl, trialPxTxt, trialEqTxt) : str.format("下周开盘继续持仓: {0} | 开盘价格 {1} | 浮动净值 {2}", contLbl, trialPxTxt, trialEqTxt)
                     isTrialEquityMsg := true
         else if previewSwitch
             fromLbl = na(holdingIdx) ? "未持仓" : array.get(labels, holdingIdx)
@@ -710,10 +726,10 @@ else
     holdingWeeks := 0
 
 plot(equityClosedSeries, title="Simulated Equity", color=color.teal, linewidth=2)
+plot(equityDailySeries, title="Daily Trial Equity", color=color.new(color.teal, 10), linewidth=1, style=plot.style_line, linestyle = plot.linestyle_dotted, display=display.all)
 plot(currentDrawdown * 100, title="Current Drawdown (%)", color=color.new(color.red, 70), linewidth=1, style=plot.style_area, display=display.all, format=format.price, precision=2)
 plot(maxDrawdownSeries * 100, title="Max Drawdown To Date (%)", color=color.new(color.red, 40), linewidth=1, style=plot.style_stepline, display=display.all, format=format.price, precision=2)
 plot(holdingPnlSeries * 100, title="Holding PnL (%)", color=weekRetColor, style=plot.style_columns)
-plot(totalReturnPct, title="Total Return (%)", color=color.new(color.teal, 30), display=display.status_line)
 
 firstWeekMarkerNeeded = inRange and not firstWeekMarkerDone and rebalanceConfirmed
 showSwitchMarker = rebalanceConfirmed and (holdingChanged or firstWeekMarkerNeeded)
