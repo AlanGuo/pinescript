@@ -227,7 +227,6 @@ var table ddTable = table.new(position.bottom_right, 2, 6, border_width=1)
 var int prevHoldingWeeksMsg = 0
 // 回撤计算相关变量
 var float peakEquity = initialCapital         // 净值高点
-var float equityLow = initialCapital          // 日内最低净值
 var float maxDrawdownSeries = 0.0             // 最大回撤
 var label maxDdLabel = na
 var float entryPrice = na                     // 开仓价格
@@ -499,16 +498,9 @@ if inRange
 
     // === 回撤计算（使用日线浮动净值的低点）===
 
-    // 在卖出时更新净值高点
-    if (switching or exitingOnly or forceExitExecuted) and barstate.isconfirmed
-        if equityClosedSeries > peakEquity
-            peakEquity := equityClosedSeries
-            equityLow := equityClosedSeries  // 新高点时重置最低净值
-            if enableEquityDebug
-                log.warning(str.format("净值新高: {0,number,#.##}", equityClosedSeries))
-
     // 计算日内最低净值
     // 收盘换仓/开仓日:用旧仓计算回撤(首次开仓时旧仓为空,不计算回撤)
+    float equityLowToday = equityClosedSeries  // 默认值为结算净值
     if useCloseRebalance and rebalanceConfirmed
         if not na(prevHoldingIdx)
             // 有旧仓:用旧仓计算回撤
@@ -522,14 +514,10 @@ if inRange
             // 用旧仓日内低点计算最低净值
             if not na(currLowOld) and not na(prevEntryPrice) and prevEntryPrice > 0
                 lowReturn = currLowOld / prevEntryPrice - 1
-                equityLowToday = prevEntryEquity * (1 + lowReturn)
-                equityLow := equityLowToday
-            else
-                equityLow := equityClosedSeries
+                equityLowToday := prevEntryEquity * (1 + lowReturn)
         else
-            // 首次开仓:不计算回撤,直接用结算净值
+            // 首次开仓:不计算回撤
             holdingPnlSeries := na
-            equityLow := equityClosedSeries
     // 开盘换仓或非换仓日:用当前持仓计算
     else if not na(holdingIdx)
         heldSym = array.get(tickers, holdingIdx)
@@ -542,18 +530,14 @@ if inRange
         // 计算日内最低净值
         if not na(currLow) and not na(entryPrice) and entryPrice > 0
             lowReturn = currLow / entryPrice - 1
-            equityLowToday = entryEquity * (1 + lowReturn)
-            equityLow := equityLowToday
-        else
-            equityLow := equityClosedSeries
+            equityLowToday := entryEquity * (1 + lowReturn)
     else
         // 无持仓
         holdingPnlSeries := na
-        equityLow := equityClosedSeries
 
     // 计算当前回撤
     if not na(peakEquity) and peakEquity > 0
-        currentDrawdown := (equityLow - peakEquity) / peakEquity
+        currentDrawdown := (equityLowToday - peakEquity) / peakEquity
     else
         currentDrawdown := 0.0
 
@@ -587,11 +571,18 @@ if inRange
 
                 if isNewMaxDrawdown
                     // 最大回撤创新高,使用error级别
-                    log.error(str.format("当前回撤: {0,number,#.##}% | 最高净值: {1,number,#.##} | 回撤净值: {2,number,#.##} | 持仓: {3} | 低点价格: {4} | 刷新最大回撤", currentDrawdown * 100, peakEquity, equityLow, ddHoldingLabel, lowPriceTxt))
+                    log.error(str.format("当前回撤: {0,number,#.##}% | 最高净值: {1,number,#.##} | 回撤净值: {2,number,#.##} | 持仓: {3} | 低点价格: {4} | 刷新最大回撤", currentDrawdown * 100, peakEquity, equityLowToday, ddHoldingLabel, lowPriceTxt))
                 else
                     // 普通回撤,使用warning级别
-                    log.warning(str.format("当前回撤: {0,number,#.##}% | 最高净值: {1,number,#.##} | 回撤净值: {2,number,#.##} | 持仓: {3} | 低点价格: {4}", currentDrawdown * 100, peakEquity, equityLow, ddHoldingLabel, lowPriceTxt))
+                    log.warning(str.format("当前回撤: {0,number,#.##}% | 最高净值: {1,number,#.##} | 回撤净值: {2,number,#.##} | 持仓: {3} | 低点价格: {4}", currentDrawdown * 100, peakEquity, equityLowToday, ddHoldingLabel, lowPriceTxt))
             lastCurrentDdLog := currentDrawdown
+
+    // 在回撤计算完成后,更新净值高点(必须在回撤计算之后,避免使用更新后的高点计算当天回撤)
+    if (switching or exitingOnly or forceExitExecuted) and barstate.isconfirmed
+        if equityClosedSeries > peakEquity
+            peakEquity := equityClosedSeries
+            if enableEquityDebug
+                log.warning(str.format("净值新高: {0,number,#.##}", equityClosedSeries))
 
     // 最大回撤标注
     if isNewMaxDrawdown and showMaxDdLabel
@@ -726,7 +717,7 @@ else
     holdingWeeks := 0
 
 plot(equityClosedSeries, title="Simulated Equity", color=color.teal, linewidth=2)
-plot(equityDailySeries, title="Daily Trial Equity", color=color.new(color.teal, 10), linewidth=1, style=plot.style_line, linestyle = plot.linestyle_dotted, display=display.all)
+plot(equityDailySeries, title="Daily Trial Equity", color=color.new(color.gray, 0), linewidth=1, style=plot.style_line, display=display.all)
 plot(currentDrawdown * 100, title="Current Drawdown (%)", color=color.new(color.red, 70), linewidth=1, style=plot.style_area, display=display.all, format=format.price, precision=2)
 plot(maxDrawdownSeries * 100, title="Max Drawdown To Date (%)", color=color.new(color.red, 40), linewidth=1, style=plot.style_stepline, display=display.all, format=format.price, precision=2)
 plot(holdingPnlSeries * 100, title="Holding PnL (%)", color=weekRetColor, style=plot.style_columns)
