@@ -718,7 +718,7 @@ else
 
 plot(equityClosedSeries, title="Simulated Equity", color=color.teal, linewidth=2)
 plot(equityDailySeries, title="Daily Trial Equity", color=color.new(color.gray, 0), linewidth=1, style=plot.style_line, display=display.all)
-plot(currentDrawdown * 100, title="Current Drawdown (%)", color=color.new(color.red, 70), linewidth=1, style=plot.style_area, display=display.all, format=format.price, precision=2)
+plot(currentDrawdown < 0 ? currentDrawdown * 100 : na, title="Current Drawdown (%)", color=color.new(color.red, 70), linewidth=1, style=plot.style_area, display=display.all, format=format.price, precision=2)
 plot(maxDrawdownSeries * 100, title="Max Drawdown To Date (%)", color=color.new(color.red, 40), linewidth=1, style=plot.style_stepline, display=display.all, format=format.price, precision=2)
 plot(holdingPnlSeries * 100, title="Holding PnL (%)", color=weekRetColor, style=plot.style_columns)
 
