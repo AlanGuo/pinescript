@@ -665,7 +665,7 @@ if inRange
     sharpeAnnual := weeksCount > 1 and stdRet > 0 ? (meanRet / stdRet) * math.sqrt(52) : na
 
     // Update table display once per bar
-    if barstate.islastconfirmedhistory or barstate.isrealtime
+    if barstate.islast
         table.cell(infoTable, 0, 0, "品种", text_color=color.white, bgcolor=color.new(color.blue, 40))
         table.cell(infoTable, 1, 0, str.format("{0}周涨幅", lookbackWeeks), text_color=color.white, bgcolor=color.new(color.blue, 40))
         table.cell(infoTable, 2, 0, "本周涨幅", text_color=color.white, bgcolor=color.new(color.blue, 40))
