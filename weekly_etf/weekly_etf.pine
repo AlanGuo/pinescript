@@ -350,11 +350,12 @@ bool shouldRecordOnAnchorDay = isAnchorDay
 // 条件：今天 > 锚点日 且 前一天 < 锚点日（不是 <=，因为 == 说明锚点日有交易）
 bool shouldRecordAfterMissedAnchor = (currentDayOfWeek > weekAnchorDay and prevDayOfWeek < weekAnchorDay)
 
-// 跨周情况：检测是否跨过了锚点周（通过时间计算）
-// 当跨周时，计算从上一交易日到下一个理论锚点日的天数，检查是否已越过
-// 这样可以正确处理整周假期的情况
+// 条件3：跨越锚点周检测（时间戳方式，不依赖跨周判断）
+// 目的：检测"前一交易日到当前交易日之间是否越过了一个锚点日"
+// 这样可以正确处理各种假期情况（包括整周假期、跨周假期等）
 bool shouldRecordOnNewWeekAfterMissedAnchor = false
-if isNewCalendarWeek
+// 只有在"不是锚点日当天"且"前后交易日dayofweek不符合条件2"时才需要检测
+if not isAnchorDay and not (currentDayOfWeek > weekAnchorDay and prevDayOfWeek < weekAnchorDay)
     int daysToNextAnchor = na
     if prevDayOfWeek >= weekAnchorDay
         // 前一交易日>=锚点日，说明锚点日在上周已经过了，下一个锚点日在下周
