@@ -350,10 +350,33 @@ bool shouldRecordOnAnchorDay = isAnchorDay
 // 条件：今天 > 锚点日 且 前一天 < 锚点日（不是 <=，因为 == 说明锚点日有交易）
 bool shouldRecordAfterMissedAnchor = (currentDayOfWeek > weekAnchorDay and prevDayOfWeek < weekAnchorDay)
 
-// 跨周情况：如果上周五是最后交易日，周一检测到跨周
-// 条件：进入新日历周 且 前一天 < 锚点日
-// 例如：anchor=周四，上周三是最后交易日（周四周五放假），本周一检测到
-bool shouldRecordOnNewWeekAfterMissedAnchor = (isNewCalendarWeek and prevDayOfWeek < weekAnchorDay)
+// 跨周情况：检测是否跨过了锚点周（通过时间计算）
+// 当跨周时，计算从上一交易日到下一个理论锚点日的天数，检查是否已越过
+// 这样可以正确处理整周假期的情况
+bool shouldRecordOnNewWeekAfterMissedAnchor = false
+if isNewCalendarWeek
+    int daysToNextAnchor = na
+    if prevDayOfWeek >= weekAnchorDay
+        // 前一交易日>=锚点日，说明锚点日在上周已经过了，下一个锚点日在下周
+        // 例如：prevDayOfWeek=6(周五)，weekAnchorDay=5(周四)，下一个周四在下周
+        // 天数 = (7-6)+5 = 6天
+        daysToNextAnchor := (7 - prevDayOfWeek) + weekAnchorDay
+    else
+        // 前一交易日<锚点日，下一个锚点日还在本周
+        // 例如：prevDayOfWeek=4(周三)，weekAnchorDay=5(周四)，下一个周四在本周
+        // 天数 = 5-4 = 1天
+        daysToNextAnchor := weekAnchorDay - prevDayOfWeek
+
+    // 计算理论上的下一个锚点日时间戳
+    int nextAnchorTime = time[1] + daysToNextAnchor * 86400000
+
+    // 如果当前时间已经越过了这个锚点日，说明锚点日在假期中被跳过了
+    shouldRecordOnNewWeekAfterMissedAnchor := time >= nextAnchorTime
+
+    // 调试日志
+    if enableAnchorRecordLog
+        log.info(str.format("条件3检测: 日期={0} prevDay={1} anchorDay={2} daysToNext={3} nextAnchor={4} current={5} passed={6}",
+            formatDate(time), prevDayOfWeek, weekAnchorDay, daysToNextAnchor, formatDate(nextAnchorTime), formatDate(time), shouldRecordOnNewWeekAfterMissedAnchor))
 
 // 合并条件
 bool shouldRecordAnchorWeek = shouldRecordOnAnchorDay or shouldRecordAfterMissedAnchor or shouldRecordOnNewWeekAfterMissedAnchor
