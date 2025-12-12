@@ -373,11 +373,6 @@ if isNewCalendarWeek
     // 如果当前时间已经越过了这个锚点日，说明锚点日在假期中被跳过了
     shouldRecordOnNewWeekAfterMissedAnchor := time >= nextAnchorTime
 
-    // 调试日志
-    if enableAnchorRecordLog
-        log.info(str.format("条件3检测: 日期={0} prevDay={1} anchorDay={2} daysToNext={3} nextAnchor={4} current={5} passed={6}",
-            formatDate(time), prevDayOfWeek, weekAnchorDay, daysToNextAnchor, formatDate(nextAnchorTime), formatDate(time), shouldRecordOnNewWeekAfterMissedAnchor))
-
 // 合并条件
 bool shouldRecordAnchorWeek = shouldRecordOnAnchorDay or shouldRecordAfterMissedAnchor or shouldRecordOnNewWeekAfterMissedAnchor
 
