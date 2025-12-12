@@ -55,8 +55,8 @@ enableEquityDebug = input.bool(false, "启用净值调试日志", group="Debug")
 enableFloatingEquityDebug = input.bool(false, "启用浮动净值调试日志", group="Debug")
 enablePositionLog = input.bool(false, "启用仓位变动日志", group="Debug")
 enableMomentumLog = input.bool(false, "启用动量计算日志", group="Debug")
-enableAnchorRecordLog = input.bool(false, "启用锚点周记录日志", group="Debug")
 enableFilterLog = input.bool(false, "启用基准过滤日志", group="Debug")
+enableAnchorRecordLog = input.bool(false, "启用Anchor周记录日志", group="Debug")
 enableAnchorStateLog = input.bool(false, "启用Anchor数组快照日志", group="Debug", tooltip="在预热/换仓触发点输出anchorDate0..4与anchorPrice0..4，用于排查lookback错位")
 
 formatDate(int ts) =>
@@ -535,9 +535,9 @@ if inWarmup and barstate.isconfirmed and (skippedAnchorCount > 0 or isAnchorDay 
 // === 补换仓循环: 处理错过的锚点周 ===
 // 当 skippedAnchorCount > 0 时，表示本bar需要补 skippedAnchorCount 个锚点周（不包含当前锚点日）。
 // 补换仓每轮流程：
-// 1) shiftAnchorHistory(close[1], time[1]) 先把“被补的锚点周收盘/日期”写入 anchorPrice0/anchorDate0
-// 2) 基于更新后的 anchorPrice0/1/... 计算动量
-// 3) 按 close[1] 成交执行补换仓
+// 1) 基于 close[1]/time[1] 计算动量
+// 2) 按 close[1] 成交执行补换仓
+// 3) shiftAnchorHistory(close[1], time[1]) 将补录周写入 anchorPrice*/anchorDate*
 bool needsCatchupRebalance = skippedAnchorCount >= 1
 
 if inRange
@@ -546,30 +546,22 @@ if inRange
         int catchupLoopCount = skippedAnchorCount
         if catchupLoopCount > 0
             for weekIdx = 0 to catchupLoopCount - 1
-                // 先把“被补的锚点周收盘价/日期”写入 anchor 历史，再用更新后的 anchorPrice0/1/... 计算动量。
-                for i = 0 to assetCount - 1
-                    string sym = array.get(tickers, i)
-                    // 补换仓始终使用前一交易日(锚点周收盘日)数据：close[1], time[1]
-                    float recordClose = request.security(sym, "D", close[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
-                    int recordTime = time[1]
-                    shiftAnchorHistory(i, recordClose, recordTime)
-
-                // 计算该周动量(补动量)
+                // 计算该周动量(补动量) - 先计算后回写锚点历史，保持与正常换仓一致
                 for i = 0 to assetCount - 1
                     string sym = array.get(tickers, i)
 
-                    // 补动量: 使用刚刚写入的 anchorPrice0 作为当前周价格
-                    float currAnchorClose = array.get(anchorPrice0, i)
-                    int currAnchorDate = array.get(anchorDate0, i)
+                    // 补动量: 使用前一交易日(锚点周收盘日)的数据
+                    float currAnchorClose = request.security(sym, "D", close[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+                    int currAnchorDate = time[1]
 
                     // 上一个anchor周价格(1周前)
-                    float prevAnchorClose1 = array.get(anchorPrice1, i)
+                    float prevAnchorClose1 = array.get(anchorPrice0, i)
 
                     // lookbackWeeks前的anchor日价格
-                    float lookbackAnchorClose = lookbackWeeks == 1 ? array.get(anchorPrice1, i) : lookbackWeeks == 2 ? array.get(anchorPrice2, i) : lookbackWeeks == 3 ? array.get(anchorPrice3, i) : lookbackWeeks == 4 ? array.get(anchorPrice4, i) : lookbackWeeks == 5 ? array.get(anchorPrice5, i) : lookbackWeeks == 6 ? array.get(anchorPrice6, i) : lookbackWeeks == 7 ? array.get(anchorPrice7, i) : lookbackWeeks == 8 ? array.get(anchorPrice8, i) : lookbackWeeks == 9 ? array.get(anchorPrice9, i) : array.get(anchorPrice10, i)
+                    float lookbackAnchorClose = lookbackWeeks == 1 ? array.get(anchorPrice0, i) : lookbackWeeks == 2 ? array.get(anchorPrice1, i) : lookbackWeeks == 3 ? array.get(anchorPrice2, i) : lookbackWeeks == 4 ? array.get(anchorPrice3, i) : lookbackWeeks == 5 ? array.get(anchorPrice4, i) : lookbackWeeks == 6 ? array.get(anchorPrice5, i) : lookbackWeeks == 7 ? array.get(anchorPrice6, i) : lookbackWeeks == 8 ? array.get(anchorPrice7, i) : lookbackWeeks == 9 ? array.get(anchorPrice8, i) : array.get(anchorPrice9, i)
 
                     // 获取对应的日期
-                    int lookbackAnchorDate = lookbackWeeks == 1 ? array.get(anchorDate1, i) : lookbackWeeks == 2 ? array.get(anchorDate2, i) : lookbackWeeks == 3 ? array.get(anchorDate3, i) : lookbackWeeks == 4 ? array.get(anchorDate4, i) : lookbackWeeks == 5 ? array.get(anchorDate5, i) : lookbackWeeks == 6 ? array.get(anchorDate6, i) : lookbackWeeks == 7 ? array.get(anchorDate7, i) : lookbackWeeks == 8 ? array.get(anchorDate8, i) : lookbackWeeks == 9 ? array.get(anchorDate9, i) : array.get(anchorDate10, i)
+                    int lookbackAnchorDate = lookbackWeeks == 1 ? array.get(anchorDate0, i) : lookbackWeeks == 2 ? array.get(anchorDate1, i) : lookbackWeeks == 3 ? array.get(anchorDate2, i) : lookbackWeeks == 4 ? array.get(anchorDate3, i) : lookbackWeeks == 5 ? array.get(anchorDate4, i) : lookbackWeeks == 6 ? array.get(anchorDate5, i) : lookbackWeeks == 7 ? array.get(anchorDate6, i) : lookbackWeeks == 8 ? array.get(anchorDate7, i) : lookbackWeeks == 9 ? array.get(anchorDate8, i) : array.get(anchorDate9, i)
 
                     // 计算涨跌幅
                     float weeklyPct = not na(currAnchorClose) and not na(prevAnchorClose1) and prevAnchorClose1 > 0 ? currAnchorClose / prevAnchorClose1 - 1 : na
@@ -701,8 +693,18 @@ if inRange
                         else
                             log.error(str.format("换仓{0}: {1}@{2} -> {3}@{4}", timingTxt, prevHeldLabelSnap, sellTxt, heldLabel, buyTxt))
 
+                // 补换仓执行完后再写入锚点历史，保持与正常换仓一致
+                int catchupRecordTime = na
+                for i = 0 to assetCount - 1
+                    string sym = array.get(tickers, i)
+                    float recordClose = request.security(sym, "D", close[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+                    int recordTime = time[1]
+                    if i == 0
+                        catchupRecordTime := recordTime
+                    shiftAnchorHistory(i, recordClose, recordTime)
+
                 if enableAnchorRecordLog
-                    log.warning(str.format("补换仓循环记录历史价格: weekIdx={0} 日期={1} (使用close[1])", weekIdx, formatDate(time[1])))
+                    log.warning(str.format("补换仓循环记录历史价格: weekIdx={0} 日期={1} (使用close[1])", weekIdx, formatDate(catchupRecordTime)))
 
 
     if rebalanceBarNoRt
