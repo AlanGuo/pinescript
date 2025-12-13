@@ -34,6 +34,7 @@ useCloseRebalance = rebalanceMode == "收盘"
 minHoldWeeks = input.int(1, "最少持有周数", minval=1, group="Logic", tooltip="持仓至少保留N周后才允许换仓，1表示每周可换")
 initialCapital = input.float(1, "初始净值", minval=0, group="Logic")
 preserveEmptyWeeks = input.bool(true, "保留无价格自然周", group="Logic", tooltip="开启后即使整周无本地交易数据也会补齐锚点周（用于保留完整自然周的动量窗口）；关闭则忽略无价格周")
+catchupWorkdayThreshold = input.int(3, "补换仓最小工作日间隔", minval=0, maxval=10, group="Logic", tooltip="节前最后一次换仓到补价日之间的工作日数大于该阈值才提前补换仓；否则顺延到节后重新评估")
 backtestStart = input.time(timestamp("2014-12-25T00:00:00"), "Backtest Start", confirm=true, group="Logic", tooltip="Only evaluate trades on or after this date.")
 backtestEnd = input.time(timestamp("2099-12-31T23:59:59"), "Backtest End", confirm=true, group="Logic", tooltip="Only evaluate trades on or before this date.")
 bool inRange = time >= backtestStart and time <= backtestEnd
@@ -200,6 +201,20 @@ shiftAnchorHistory(int i, float recordClose, int recordTime) =>
     array.set(anchorDate2, i, array.get(anchorDate1, i))
     array.set(anchorDate1, i, array.get(anchorDate0, i))
     array.set(anchorDate0, i, recordTime)
+
+// 计算两个日期之间的工作日天数（仅统计周一至周五）
+countWorkdaysBetween(int startTs, int endTs) =>
+    if na(startTs) or na(endTs) or endTs <= startTs
+        0
+    else
+        int totalDays = int((endTs - startTs) / 86400000)
+        int workdays = 0
+        for offset = 1 to totalDays
+            int currTs = startTs + offset * 86400000
+            int currDow = dayofweek(currTs)
+            if currDow >= dayofweek.monday and currDow <= dayofweek.friday
+                workdays += 1
+        workdays
 
 if barstate.isfirst
     array.clear(momentum4w)
@@ -483,13 +498,16 @@ for i = 0 to assetCount - 1
     array.set(lastBarClose, i, currPrice)
     array.set(lastBarTime, i, time)
 
+int referencePrevAnchorDate = assetCount > 0 ? array.get(anchorDate0, 0) : na
+bool hasNewTradingSincePrevAnchor = preserveEmptyWeeks ? true : (na(referencePrevAnchorDate) or na(time[1]) ? true : time[1] > referencePrevAnchorDate)
+
 // === Warm-up (预热): 在回测起始日前也要记录锚点周历史 ===
 // 目的：即使 backtestStart 是锚点日，也能在 backtestStart 当天拿到 lookbackWeeks 所需的历史 anchor 价格/日期，从而允许开仓。
 // 注意：这里只更新 anchorPrice*/anchorDate*；不做动量排名、换仓、净值等任何交易逻辑。
 bool inWarmup = time < backtestStart
 if inWarmup and barstate.isconfirmed and (skippedAnchorCount > 0 or isAnchorDay or shouldRecordAfterMissedAnchor)
     // 先补齐被跳过的锚点周（近似处理：统一使用 close[1]/time[1]）
-    int warmupCatchupCount = preserveEmptyWeeks ? skippedAnchorCount : (skippedAnchorCount > 0 ? 1 : 0)
+    int warmupCatchupCount = preserveEmptyWeeks ? skippedAnchorCount : ((skippedAnchorCount > 0 and hasNewTradingSincePrevAnchor) ? 1 : 0)
     if warmupCatchupCount > 0
         for weekIdx = 0 to warmupCatchupCount - 1
             for i = 0 to assetCount - 1
@@ -542,13 +560,24 @@ if inWarmup and barstate.isconfirmed and (skippedAnchorCount > 0 or isAnchorDay 
 // 3) shiftAnchorHistory(close[1], time[1]) 将补录周写入 anchorPrice*/anchorDate*
 bool needsCatchupRebalance = skippedAnchorCount >= 1
 
+int catchupWorkdayGap = not na(referencePrevAnchorDate) and not na(time[1]) ? countWorkdaysBetween(referencePrevAnchorDate, time[1]) : na
+bool allowCatchupRebalance = na(catchupWorkdayGap) ? true : catchupWorkdayGap > catchupWorkdayThreshold
+
 if inRange
     if needsCatchupRebalance and barstate.isconfirmed
         // 循环处理需要补的锚点周
-        int catchupRecordCount = preserveEmptyWeeks ? skippedAnchorCount : (skippedAnchorCount > 0 ? 1 : 0)
+        int catchupRecordCount = 0
+        if skippedAnchorCount > 0
+            catchupRecordCount := preserveEmptyWeeks ? skippedAnchorCount : (hasNewTradingSincePrevAnchor ? 1 : 0)
         if catchupRecordCount > 0
+            if enableAnchorRecordLog
+                string gapTxt = na(catchupWorkdayGap) ? "N/A" : str.tostring(catchupWorkdayGap)
+                string decisionTxt = allowCatchupRebalance ? "执行补换仓" : "跳过补换仓"
+                log.warning(str.format("补换仓判定: workdayGap={0} 阈值={1} -> {2}", gapTxt, catchupWorkdayThreshold, decisionTxt))
             for weekIdx = 0 to catchupRecordCount - 1
-                bool hasPriceData = weekIdx == 0
+                // 仅当工作日间隔超过阈值且是第一个错过周时才补换仓，其余周只记录Anchor
+                bool performCatchupTrade = allowCatchupRebalance and weekIdx == 0
+                bool hasPriceData = performCatchupTrade
                 if hasPriceData
                     // 计算该周动量(补动量) - 先计算后回写锚点历史，保持与正常换仓一致
                     for i = 0 to assetCount - 1
@@ -698,7 +727,8 @@ if inRange
                                 log.error(str.format("换仓{0}: {1}@{2} -> {3}@{4}", timingTxt, prevHeldLabelSnap, sellTxt, heldLabel, buyTxt))
                 else
                     if enableMomentumLog
-                        log.info(str.format("[补锚点 weekIdx={0}] 无本地价格数据，按设置仅记录Anchor历史", weekIdx))
+                        string skipReason = allowCatchupRebalance ? "按策略仅记录Anchor历史" : str.format("工作日间隔<=阈值({0})，跳过补换仓", catchupWorkdayThreshold)
+                        log.info(str.format("[补锚点 weekIdx={0}] {1}", weekIdx, skipReason))
 
                 // 补换仓执行完后再写入锚点历史，保持与正常换仓一致
                 int catchupRecordTime = na
@@ -724,6 +754,8 @@ if inRange
                     targetAnchorTime := time[1] + (daysToFirstAnchor + weekIdx * 7) * 86400000
                     string targetAnchorDateTxt = na(targetAnchorTime) ? "N/A" : formatDate(targetAnchorTime)
                     log.warning(str.format("补换仓周锚点: weekIdx={0} 日期={1} ({2}) 目标Anchor日={3}", weekIdx, formatDate(catchupRecordTime), recordNote, targetAnchorDateTxt))
+        else if enableAnchorRecordLog and skippedAnchorCount > 0 and not preserveEmptyWeeks and not hasNewTradingSincePrevAnchor
+            log.warning("补换仓判定: 缺少新交易日，跳过本次锚点补录/换仓")
 
 
     if rebalanceBarNoRt
