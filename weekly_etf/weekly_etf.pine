@@ -570,7 +570,7 @@ if inRange
         if skippedAnchorCount > 0
             catchupRecordCount := preserveEmptyWeeks ? skippedAnchorCount : (hasNewTradingSincePrevAnchor ? 1 : 0)
         if catchupRecordCount > 0
-            if enableAnchorRecordLog
+            if enablePositionLog
                 string gapTxt = na(catchupWorkdayGap) ? "N/A" : str.tostring(catchupWorkdayGap)
                 string decisionTxt = allowCatchupRebalance ? "执行补换仓" : "跳过补换仓"
                 log.warning(str.format("补换仓判定: workdayGap={0} 阈值={1} -> {2}", gapTxt, catchupWorkdayThreshold, decisionTxt))
@@ -726,9 +726,17 @@ if inRange
                             else
                                 log.error(str.format("换仓{0}: {1}@{2} -> {3}@{4}", timingTxt, prevHeldLabelSnap, sellTxt, heldLabel, buyTxt))
                 else
-                    if enableMomentumLog
+                    if enableAnchorRecordLog
+                        int catchupRecordTimeSkip = time[1]
+                        int daysToFirstAnchorSkip = 0
+                        if prevDayOfWeek >= weekAnchorDay
+                            daysToFirstAnchorSkip := (7 - prevDayOfWeek) + weekAnchorDay
+                        else
+                            daysToFirstAnchorSkip := weekAnchorDay - prevDayOfWeek
+                        int targetAnchorTimeSkip = time[1] + (daysToFirstAnchorSkip + weekIdx * 7) * 86400000
+                        string targetAnchorDateSkip = na(targetAnchorTimeSkip) ? "N/A" : formatDate(targetAnchorTimeSkip)
                         string skipReason = allowCatchupRebalance ? "按策略仅记录Anchor历史" : str.format("工作日间隔<=阈值({0})，跳过补换仓", catchupWorkdayThreshold)
-                        log.info(str.format("[补锚点 weekIdx={0}] {1}", weekIdx, skipReason))
+                        log.warning(str.format("补换仓周锚点: weekIdx={0} 日期={1} (仅记录close[1]; {2}) 目标Anchor日={3}", weekIdx, formatDate(catchupRecordTimeSkip), skipReason, targetAnchorDateSkip))
 
                 // 补换仓执行完后再写入锚点历史，保持与正常换仓一致
                 int catchupRecordTime = na
@@ -740,8 +748,8 @@ if inRange
                         catchupRecordTime := recordTime
                     shiftAnchorHistory(i, recordClose, recordTime)
 
-                if enableAnchorRecordLog
-                    string recordNote = hasPriceData ? "使用close[1]" : "使用close[1] 空周"
+                if enableAnchorRecordLog and hasPriceData
+                    string recordNote = "使用close[1]"
                     // 计算本次补录对应的目标锚点日期（日历上的anchor日）
                     int targetAnchorTime = na
                     // 从上一根bar所在日期出发，找到第一个anchor日
