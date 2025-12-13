@@ -33,6 +33,7 @@ rebalanceMode = input.string("收盘", "换仓时点", options=["收盘", "开�
 useCloseRebalance = rebalanceMode == "收盘"
 minHoldWeeks = input.int(1, "最少持有周数", minval=1, group="Logic", tooltip="持仓至少保留N周后才允许换仓，1表示每周可换")
 initialCapital = input.float(1, "初始净值", minval=0, group="Logic")
+preserveEmptyWeeks = input.bool(true, "保留无价格自然周", group="Logic", tooltip="开启后即使整周无本地交易数据也会补齐锚点周（用于保留完整自然周的动量窗口）；关闭则忽略无价格周")
 backtestStart = input.time(timestamp("2014-12-25T00:00:00"), "Backtest Start", confirm=true, group="Logic", tooltip="Only evaluate trades on or after this date.")
 backtestEnd = input.time(timestamp("2099-12-31T23:59:59"), "Backtest End", confirm=true, group="Logic", tooltip="Only evaluate trades on or before this date.")
 bool inRange = time >= backtestStart and time <= backtestEnd
@@ -488,8 +489,9 @@ for i = 0 to assetCount - 1
 bool inWarmup = time < backtestStart
 if inWarmup and barstate.isconfirmed and (skippedAnchorCount > 0 or isAnchorDay or shouldRecordAfterMissedAnchor)
     // 先补齐被跳过的锚点周（近似处理：统一使用 close[1]/time[1]）
-    if skippedAnchorCount > 0
-        for weekIdx = 0 to skippedAnchorCount - 1
+    int warmupCatchupCount = preserveEmptyWeeks ? skippedAnchorCount : (skippedAnchorCount > 0 ? 1 : 0)
+    if warmupCatchupCount > 0
+        for weekIdx = 0 to warmupCatchupCount - 1
             for i = 0 to assetCount - 1
                 string sym = array.get(tickers, i)
                 float recordClose = request.security(sym, "D", close[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
@@ -543,155 +545,160 @@ bool needsCatchupRebalance = skippedAnchorCount >= 1
 if inRange
     if needsCatchupRebalance and barstate.isconfirmed
         // 循环处理需要补的锚点周
-        int catchupLoopCount = skippedAnchorCount
-        if catchupLoopCount > 0
-            for weekIdx = 0 to catchupLoopCount - 1
-                // 计算该周动量(补动量) - 先计算后回写锚点历史，保持与正常换仓一致
-                for i = 0 to assetCount - 1
-                    string sym = array.get(tickers, i)
+        int catchupRecordCount = preserveEmptyWeeks ? skippedAnchorCount : (skippedAnchorCount > 0 ? 1 : 0)
+        if catchupRecordCount > 0
+            for weekIdx = 0 to catchupRecordCount - 1
+                bool hasPriceData = weekIdx == 0
+                if hasPriceData
+                    // 计算该周动量(补动量) - 先计算后回写锚点历史，保持与正常换仓一致
+                    for i = 0 to assetCount - 1
+                        string sym = array.get(tickers, i)
 
-                    // 补动量: 使用前一交易日(锚点周收盘日)的数据
-                    float currAnchorClose = request.security(sym, "D", close[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
-                    int currAnchorDate = time[1]
+                        // 补动量: 使用前一交易日(锚点周收盘日)的数据
+                        float currAnchorClose = request.security(sym, "D", close[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+                        int currAnchorDate = time[1]
 
-                    // 上一个anchor周价格(1周前)
-                    float prevAnchorClose1 = array.get(anchorPrice0, i)
+                        // 上一个anchor周价格(1周前)
+                        float prevAnchorClose1 = array.get(anchorPrice0, i)
 
-                    // lookbackWeeks前的anchor日价格
-                    float lookbackAnchorClose = lookbackWeeks == 1 ? array.get(anchorPrice0, i) : lookbackWeeks == 2 ? array.get(anchorPrice1, i) : lookbackWeeks == 3 ? array.get(anchorPrice2, i) : lookbackWeeks == 4 ? array.get(anchorPrice3, i) : lookbackWeeks == 5 ? array.get(anchorPrice4, i) : lookbackWeeks == 6 ? array.get(anchorPrice5, i) : lookbackWeeks == 7 ? array.get(anchorPrice6, i) : lookbackWeeks == 8 ? array.get(anchorPrice7, i) : lookbackWeeks == 9 ? array.get(anchorPrice8, i) : array.get(anchorPrice9, i)
+                        // lookbackWeeks前的anchor日价格
+                        float lookbackAnchorClose = lookbackWeeks == 1 ? array.get(anchorPrice0, i) : lookbackWeeks == 2 ? array.get(anchorPrice1, i) : lookbackWeeks == 3 ? array.get(anchorPrice2, i) : lookbackWeeks == 4 ? array.get(anchorPrice3, i) : lookbackWeeks == 5 ? array.get(anchorPrice4, i) : lookbackWeeks == 6 ? array.get(anchorPrice5, i) : lookbackWeeks == 7 ? array.get(anchorPrice6, i) : lookbackWeeks == 8 ? array.get(anchorPrice7, i) : lookbackWeeks == 9 ? array.get(anchorPrice8, i) : array.get(anchorPrice9, i)
 
-                    // 获取对应的日期
-                    int lookbackAnchorDate = lookbackWeeks == 1 ? array.get(anchorDate0, i) : lookbackWeeks == 2 ? array.get(anchorDate1, i) : lookbackWeeks == 3 ? array.get(anchorDate2, i) : lookbackWeeks == 4 ? array.get(anchorDate3, i) : lookbackWeeks == 5 ? array.get(anchorDate4, i) : lookbackWeeks == 6 ? array.get(anchorDate5, i) : lookbackWeeks == 7 ? array.get(anchorDate6, i) : lookbackWeeks == 8 ? array.get(anchorDate7, i) : lookbackWeeks == 9 ? array.get(anchorDate8, i) : array.get(anchorDate9, i)
+                        // 获取对应的日期
+                        int lookbackAnchorDate = lookbackWeeks == 1 ? array.get(anchorDate0, i) : lookbackWeeks == 2 ? array.get(anchorDate1, i) : lookbackWeeks == 3 ? array.get(anchorDate2, i) : lookbackWeeks == 4 ? array.get(anchorDate3, i) : lookbackWeeks == 5 ? array.get(anchorDate4, i) : lookbackWeeks == 6 ? array.get(anchorDate5, i) : lookbackWeeks == 7 ? array.get(anchorDate6, i) : lookbackWeeks == 8 ? array.get(anchorDate7, i) : lookbackWeeks == 9 ? array.get(anchorDate8, i) : array.get(anchorDate9, i)
 
-                    // 计算涨跌幅
-                    float weeklyPct = not na(currAnchorClose) and not na(prevAnchorClose1) and prevAnchorClose1 > 0 ? currAnchorClose / prevAnchorClose1 - 1 : na
-                    float momentum4wPct = not na(currAnchorClose) and not na(lookbackAnchorClose) and lookbackAnchorClose > 0 ? currAnchorClose / lookbackAnchorClose - 1 : na
+                        // 计算涨跌幅
+                        float weeklyPct = not na(currAnchorClose) and not na(prevAnchorClose1) and prevAnchorClose1 > 0 ? currAnchorClose / prevAnchorClose1 - 1 : na
+                        float momentum4wPct = not na(currAnchorClose) and not na(lookbackAnchorClose) and lookbackAnchorClose > 0 ? currAnchorClose / lookbackAnchorClose - 1 : na
 
-                    if na(currAnchorClose) or na(weeklyPct)
-                        continue  // skip symbols with insufficient history
+                        if na(currAnchorClose) or na(weeklyPct)
+                            continue  // skip symbols with insufficient history
 
-                    string lbl = array.get(labels, i)
-                    string currDateStr = formatDate(currAnchorDate)
-                    string lookbackDateStr = formatDate(lookbackAnchorDate)
-                    if enableMomentumLog
-                        log.info(str.format("[补动量 weekIdx={0}] Symbol: {1} ({2}) Anchor日[{3}]: {4} 本周涨幅: {5,number,#.##}% {6}周前Anchor日[{7}]: {8} {6}周涨幅: {9,number,#.##}%",
-                            weekIdx, sym, lbl, currDateStr, currAnchorClose, weeklyPct * 100, lookbackWeeks, lookbackDateStr, lookbackAnchorClose, momentum4wPct * 100))
+                        string lbl = array.get(labels, i)
+                        string currDateStr = formatDate(currAnchorDate)
+                        string lookbackDateStr = formatDate(lookbackAnchorDate)
+                        if enableMomentumLog
+                            log.info(str.format("[补动量 weekIdx={0}] Symbol: {1} ({2}) Anchor日[{3}]: {4} 本周涨幅: {5,number,#.##}% {6}周前Anchor日[{7}]: {8} {6}周涨幅: {9,number,#.##}%",
+                                weekIdx, sym, lbl, currDateStr, currAnchorClose, weeklyPct * 100, lookbackWeeks, lookbackDateStr, lookbackAnchorClose, momentum4wPct * 100))
 
-                    array.set(weeklyClose, i, currAnchorClose)
-                    array.set(weeklyRet,  i, weeklyPct)
-                    array.set(momentum4w, i, momentum4wPct)
-                    array.set(lookbackClose, i, lookbackAnchorClose)
+                        array.set(weeklyClose, i, currAnchorClose)
+                        array.set(weeklyRet,  i, weeklyPct)
+                        array.set(momentum4w, i, momentum4wPct)
+                        array.set(lookbackClose, i, lookbackAnchorClose)
 
-                // 选择最佳标的
-                float bestMomentum = -10e10
-                int bestIdx = na
-                for i = 0 to assetCount - 1
-                    float mom = rankMomentum(i)
-                    if not na(mom) and mom > bestMomentum
-                        bestMomentum := mom
-                        bestIdx := i
+                    // 选择最佳标的
+                    float bestMomentum = -10e10
+                    int bestIdx = na
+                    for i = 0 to assetCount - 1
+                        float mom = rankMomentum(i)
+                        if not na(mom) and mom > bestMomentum
+                            bestMomentum := mom
+                            bestIdx := i
 
-                // 执行补换仓
-                if not na(bestIdx)
-                    int prevHoldingIdxSnap = holdingIdx
-                    bool hadPositionPrev = not na(prevHoldingIdxSnap)
-                    string prevHeldLabelSnap = hadPositionPrev ? array.get(labels, prevHoldingIdxSnap) : "未持仓"
-                    int prevHoldingWeeksSnap = holdingWeeks
+                    // 执行补换仓
+                    if not na(bestIdx)
+                        int prevHoldingIdxSnap = holdingIdx
+                        bool hadPositionPrev = not na(prevHoldingIdxSnap)
+                        string prevHeldLabelSnap = hadPositionPrev ? array.get(labels, prevHoldingIdxSnap) : "未持仓"
+                        int prevHoldingWeeksSnap = holdingWeeks
 
-                    // Determine next holding
-                    int weeksHeld = hadPositionPrev ? holdingWeeks + 1 : 0
-                    int nextIdx = bestIdx
-                    bool holdLockActive = hadPositionPrev and not na(nextIdx) and weeksHeld < minHoldWeeks and isSymbolEligible(prevHoldingIdxSnap)
-                    if holdLockActive
-                        nextIdx := prevHoldingIdxSnap
+                        // Determine next holding
+                        int weeksHeld = hadPositionPrev ? holdingWeeks + 1 : 0
+                        int nextIdx = bestIdx
+                        bool holdLockActive = hadPositionPrev and not na(nextIdx) and weeksHeld < minHoldWeeks and isSymbolEligible(prevHoldingIdxSnap)
+                        if holdLockActive
+                            nextIdx := prevHoldingIdxSnap
 
-                    bool hasCandidate = not na(nextIdx)
-                    bool switching = hadPositionPrev and hasCandidate and nextIdx != prevHoldingIdxSnap
-                    bool exitingOnly = hadPositionPrev and not hasCandidate
-                    bool entering = hasCandidate and (not hadPositionPrev or switching)
-                    bool switchEvent = switching or entering or exitingOnly
+                        bool hasCandidate = not na(nextIdx)
+                        bool switching = hadPositionPrev and hasCandidate and nextIdx != prevHoldingIdxSnap
+                        bool exitingOnly = hadPositionPrev and not hasCandidate
+                        bool entering = hasCandidate and (not hadPositionPrev or switching)
+                        bool switchEvent = switching or entering or exitingOnly
 
-                    // 递增持仓周计数
-                    if hadPositionPrev and not switching and not exitingOnly
-                        holdingWeeks := weeksHeld
+                        // 递增持仓周计数
+                        if hadPositionPrev and not switching and not exitingOnly
+                            holdingWeeks := weeksHeld
 
-                    // 补换仓日志相关变量
-                    string sellTxt = "—"
-                    string buyTxt = "—"
-                    float sellPrice = na
-                    float buyPrice = na
+                        // 补换仓日志相关变量
+                        string sellTxt = "—"
+                        string buyTxt = "—"
+                        float sellPrice = na
+                        float buyPrice = na
 
-                    // Realize when exiting (switch or exit)
-                    if switching or exitingOnly
-                        int exitIdx = prevHoldingIdxSnap
-                        string exitSym = array.get(tickers, exitIdx)
-                        string exitLabel = array.get(labels, exitIdx)
-                        // 补换仓: 使用前一交易日(锚点周收盘日)的收盘价
-                        float exitPrice = roundPrice(request.security(exitSym, "D", close[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off))
-                        float basisPrice = entryPrice
-                        float realized = not na(exitPrice) and not na(basisPrice) and basisPrice > 0 ? exitPrice / basisPrice - 1 : na
-                        if not na(realized)
-                            equity := equity * (1 + realized)
-                            // stats per trade
-                            float prevMul = array.get(symCumReturn, exitIdx)
-                            array.set(symCumReturn, exitIdx, nz(prevMul, 1.0) * (1 + realized))
-                            int prevTrades = array.get(symTradeCount, exitIdx)
-                            array.set(symTradeCount, exitIdx, prevTrades + 1)
-                            if realized > 0
-                                array.set(symWinCount, exitIdx, array.get(symWinCount, exitIdx) + 1)
-                                array.set(symProfitSum, exitIdx, array.get(symProfitSum, exitIdx) + realized)
-                            else if realized < 0
-                                array.set(symLossSum, exitIdx, array.get(symLossSum, exitIdx) + realized)
-                            // 累计收益统计
-                            sumWeeklyRet += realized
-                            sumWeeklyRetSq += realized * realized
-                            weeksCount += 1
+                        // Realize when exiting (switch or exit)
+                        if switching or exitingOnly
+                            int exitIdx = prevHoldingIdxSnap
+                            string exitSym = array.get(tickers, exitIdx)
+                            string exitLabel = array.get(labels, exitIdx)
+                            // 补换仓: 使用前一交易日(锚点周收盘日)的收盘价
+                            float exitPrice = roundPrice(request.security(exitSym, "D", close[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off))
+                            float basisPrice = entryPrice
+                            float realized = not na(exitPrice) and not na(basisPrice) and basisPrice > 0 ? exitPrice / basisPrice - 1 : na
+                            if not na(realized)
+                                equity := equity * (1 + realized)
+                                // stats per trade
+                                float prevMul = array.get(symCumReturn, exitIdx)
+                                array.set(symCumReturn, exitIdx, nz(prevMul, 1.0) * (1 + realized))
+                                int prevTrades = array.get(symTradeCount, exitIdx)
+                                array.set(symTradeCount, exitIdx, prevTrades + 1)
+                                if realized > 0
+                                    array.set(symWinCount, exitIdx, array.get(symWinCount, exitIdx) + 1)
+                                    array.set(symProfitSum, exitIdx, array.get(symProfitSum, exitIdx) + realized)
+                                else if realized < 0
+                                    array.set(symLossSum, exitIdx, array.get(symLossSum, exitIdx) + realized)
+                                // 累计收益统计
+                                sumWeeklyRet += realized
+                                sumWeeklyRetSq += realized * realized
+                                weeksCount += 1
 
-                        equityClosedSeries := equity
-                        lastSellPrice := exitPrice
-                        holdingWeeks := 0
-                        sellPrice := exitPrice
-                        sellTxt := fmtPrice(exitPrice)
-                    else
-                        // 持续持有
-                        equityClosedSeries := equity
-                        lastSellPrice := na
-
-                    // 开仓/换仓
-                    if entering
-                        // 补换仓: 使用前一交易日(锚点周收盘日)的收盘价
-                        float nextBuyPrice = roundPrice(request.security(array.get(tickers, nextIdx), "D", close[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off))
-                        entryPrice := nextBuyPrice
-                        entryEquity := equity
-                        lastBuyPrice := nextBuyPrice
-                        buyPrice := nextBuyPrice
-                        buyTxt := fmtPrice(nextBuyPrice)
-                    else if exitingOnly
-                        entryPrice := na
-                        entryEquity := equity
-                        lastBuyPrice := na
-
-                    holdingIdx := hasCandidate ? nextIdx : na
-                    heldLabel := not na(holdingIdx) ? array.get(labels, holdingIdx) : "未持仓"
-
-                    // 统一格式的补换仓日志
-                    if enablePositionLog and switchEvent
-                        // 计算目标锚点日期
-                        int daysToTargetAnchor = weekAnchorDay - prevDayOfWeek
-                        if daysToTargetAnchor <= 0
-                            daysToTargetAnchor := daysToTargetAnchor + 7
-                        int targetAnchorTime = time[1] + daysToTargetAnchor * 86400000
-                        string targetDate = formatDate(targetAnchorTime)
-                        string actualDate = formatDate(time[1])
-                        string rebalanceTiming = useCloseRebalance ? "收盘" : "次日开盘"
-                        string timingTxt = str.format("[补换仓 目标:{0} 实际:{1} {2}]", targetDate, actualDate, rebalanceTiming)
-
-                        if entering and not switching and not hadPositionPrev
-                            log.error(str.format("开仓{0}: {1}@{2}", timingTxt, heldLabel, buyTxt))
-                        else if exitingOnly
-                            log.error(str.format("平仓{0}: {1}@{2}", timingTxt, prevHeldLabelSnap, sellTxt))
+                            equityClosedSeries := equity
+                            lastSellPrice := exitPrice
+                            holdingWeeks := 0
+                            sellPrice := exitPrice
+                            sellTxt := fmtPrice(exitPrice)
                         else
-                            log.error(str.format("换仓{0}: {1}@{2} -> {3}@{4}", timingTxt, prevHeldLabelSnap, sellTxt, heldLabel, buyTxt))
+                            // 持续持有
+                            equityClosedSeries := equity
+                            lastSellPrice := na
+
+                        // 开仓/换仓
+                        if entering
+                            // 补换仓: 使用前一交易日(锚点周收盘日)的收盘价
+                            float nextBuyPrice = roundPrice(request.security(array.get(tickers, nextIdx), "D", close[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off))
+                            entryPrice := nextBuyPrice
+                            entryEquity := equity
+                            lastBuyPrice := nextBuyPrice
+                            buyPrice := nextBuyPrice
+                            buyTxt := fmtPrice(nextBuyPrice)
+                        else if exitingOnly
+                            entryPrice := na
+                            entryEquity := equity
+                            lastBuyPrice := na
+
+                        holdingIdx := hasCandidate ? nextIdx : na
+                        heldLabel := not na(holdingIdx) ? array.get(labels, holdingIdx) : "未持仓"
+
+                        // 统一格式的补换仓日志
+                        if enablePositionLog and switchEvent
+                            // 计算目标锚点日期
+                            int daysToTargetAnchor = weekAnchorDay - prevDayOfWeek
+                            if daysToTargetAnchor <= 0
+                                daysToTargetAnchor := daysToTargetAnchor + 7
+                            int targetAnchorTime = time[1] + daysToTargetAnchor * 86400000
+                            string targetDate = formatDate(targetAnchorTime)
+                            string actualDate = formatDate(time[1])
+                            string rebalanceTiming = useCloseRebalance ? "收盘" : "次日开盘"
+                            string timingTxt = str.format("[补换仓 目标:{0} 实际:{1} {2}]", targetDate, actualDate, rebalanceTiming)
+
+                            if entering and not switching and not hadPositionPrev
+                                log.error(str.format("开仓{0}: {1}@{2}", timingTxt, heldLabel, buyTxt))
+                            else if exitingOnly
+                                log.error(str.format("平仓{0}: {1}@{2}", timingTxt, prevHeldLabelSnap, sellTxt))
+                            else
+                                log.error(str.format("换仓{0}: {1}@{2} -> {3}@{4}", timingTxt, prevHeldLabelSnap, sellTxt, heldLabel, buyTxt))
+                else
+                    if enableMomentumLog
+                        log.info(str.format("[补锚点 weekIdx={0}] 无本地价格数据，按设置仅记录Anchor历史", weekIdx))
 
                 // 补换仓执行完后再写入锚点历史，保持与正常换仓一致
                 int catchupRecordTime = na
@@ -704,7 +711,8 @@ if inRange
                     shiftAnchorHistory(i, recordClose, recordTime)
 
                 if enableAnchorRecordLog
-                    log.warning(str.format("补换仓循环记录历史价格: weekIdx={0} 日期={1} (使用close[1])", weekIdx, formatDate(catchupRecordTime)))
+                    string recordNote = hasPriceData ? "使用close[1]" : "使用close[1] 空周"
+                    log.warning(str.format("补换仓循环记录历史价格: weekIdx={0} 日期={1} ({2})", weekIdx, formatDate(catchupRecordTime), recordNote))
 
 
     if rebalanceBarNoRt
