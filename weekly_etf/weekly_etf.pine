@@ -712,7 +712,18 @@ if inRange
 
                 if enableAnchorRecordLog
                     string recordNote = hasPriceData ? "使用close[1]" : "使用close[1] 空周"
-                    log.warning(str.format("补换仓循环记录历史价格: weekIdx={0} 日期={1} ({2})", weekIdx, formatDate(catchupRecordTime), recordNote))
+                    // 计算本次补录对应的目标锚点日期（日历上的anchor日）
+                    int targetAnchorTime = na
+                    // 从上一根bar所在日期出发，找到第一个anchor日
+                    int daysToFirstAnchor = 0
+                    if prevDayOfWeek >= weekAnchorDay
+                        daysToFirstAnchor := (7 - prevDayOfWeek) + weekAnchorDay
+                    else
+                        daysToFirstAnchor := weekAnchorDay - prevDayOfWeek
+                    // 第 weekIdx 个被跳过的anchor周，对应 firstAnchor + weekIdx*7 天
+                    targetAnchorTime := time[1] + (daysToFirstAnchor + weekIdx * 7) * 86400000
+                    string targetAnchorDateTxt = na(targetAnchorTime) ? "N/A" : formatDate(targetAnchorTime)
+                    log.warning(str.format("补换仓周锚点: weekIdx={0} 日期={1} ({2}) 目标Anchor日={3}", weekIdx, formatDate(catchupRecordTime), recordNote, targetAnchorDateTxt))
 
 
     if rebalanceBarNoRt
@@ -999,7 +1010,9 @@ if inRange
 
         if enableAnchorRecordLog
             string dataSourceTxt = isAnchorDay ? "close" : "close[1]"
-            log.warning(str.format("正常换仓记录历史价格: 日期={0} 数据来源={1}", formatDate(normalRecordTime), dataSourceTxt))
+            // 正常换仓的目标锚点日：与记录用的anchor日期一致
+            string targetAnchorDateTxt = na(normalRecordTime) ? "N/A" : formatDate(normalRecordTime)
+            log.warning(str.format("正常换仓周锚点: 日期={0} 数据来源={1} 目标Anchor日={2}", formatDate(normalRecordTime), dataSourceTxt, targetAnchorDateTxt))
 
     else
         if not forceExitExecuted
