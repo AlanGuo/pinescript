@@ -34,7 +34,7 @@ useCloseRebalance = rebalanceMode == "收盘"
 minHoldWeeks = input.int(1, "最少持有周数", minval=1, group="Logic", tooltip="持仓至少保留N周后才允许换仓，1表示每周可换")
 initialCapital = input.float(1, "初始净值", minval=0, group="Logic")
 preserveEmptyWeeks = input.bool(true, "保留无价格自然周", group="Logic", tooltip="开启后即使整周无本地交易数据也会补齐锚点周（用于保留完整自然周的动量窗口）；关闭则忽略无价格周")
-catchupWorkdayThreshold = input.int(3, "补换仓最小工作日间隔", minval=0, maxval=10, group="Logic", tooltip="节前最后一次换仓到补价日之间的工作日数大于该阈值才提前补换仓；否则顺延到节后重新评估")
+catchupWorkdayThreshold = input.int(4, "补换仓最小工作日间隔", minval=0, maxval=10, group="Logic", tooltip="节前最后一次换仓到补价日之间的工作日数大于该阈值才提前补换仓；否则顺延到节后重新评估")
 backtestStart = input.time(timestamp("2014-12-25T00:00:00"), "Backtest Start", confirm=true, group="Logic", tooltip="Only evaluate trades on or after this date.")
 backtestEnd = input.time(timestamp("2099-12-31T23:59:59"), "Backtest End", confirm=true, group="Logic", tooltip="Only evaluate trades on or before this date.")
 bool inRange = time >= backtestStart and time <= backtestEnd
