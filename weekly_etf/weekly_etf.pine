@@ -874,6 +874,8 @@ if inRange
         heldLabel := "未持仓"
         holdingWeeks := 0
         entryPrice := na
+        // 强平后不再展示持仓盈亏
+        holdingPnlSeries := na
         rebalancePriceSeries := exitPrice
         forceExitExecuted := true
         // 标注强平（当日收盘执行）
@@ -910,6 +912,8 @@ if inRange
         heldLabel := "未持仓"
         holdingWeeks := 0
         entryPrice := na
+        // 强平后不再展示持仓盈亏
+        holdingPnlSeries := na
         rebalancePriceSeries := exitPrice
         forceExitPending := false
         forceExitPendingIdx := na
@@ -1089,7 +1093,10 @@ if inRange
     // 计算日内最低净值
     // 收盘换仓/开仓日:用旧仓计算回撤(首次开仓时旧仓为空,不计算回撤)
     float equityLowToday = equityClosedSeries  // 默认值为结算净值
-    if useCloseRebalance and rebalanceConfirmed
+    if forceExitExecuted
+        // 当天发生强平: 不再显示持仓盈亏, 仅使用结算净值参与回撤计算
+        holdingPnlSeries := na
+    else if useCloseRebalance and rebalanceConfirmed
         if not na(prevHoldingIdx)
             // 有旧仓:用旧仓计算回撤
             string heldSymOld = array.get(tickers, prevHoldingIdx)
