@@ -28,7 +28,7 @@ exclude3OnDown = input.bool(true,  "基准跌破均线时停用Symbol3", group="
 exclude4OnDown = input.bool(true,  "基准跌破均线时停用Symbol4", group="Market Filter")   // Symbol 4（日经ETF）
 
 lookbackWeeks = input.int(4, "动量回顾(周)", minval=1, group="Logic")
-weekAnchor = input.string("周五", "周结束日 (Week Anchor)", options=["周一", "周二", "周三", "周四", "周五"], group="Logic", tooltip="选择一周的哪一天作为周结束日,动量将从上周的这一天计算到本周的这一天")
+weekAnchor = input.string("周四", "周结束日 (Week Anchor)", options=["周一", "周二", "周三", "周四", "周五"], group="Logic", tooltip="选择一周的哪一天作为周结束日,动量将从上周的这一天计算到本周的这一天")
 rebalanceMode = input.string("收盘", "换仓时点", options=["收盘", "开盘"], group="Logic", tooltip="选择在最后交易日收盘还是下一个交易日开盘进行换仓")
 useCloseRebalance = rebalanceMode == "收盘"
 minHoldWeeks = input.int(1, "最少持有周数", minval=1, group="Logic", tooltip="持仓至少保留N周后才允许换仓，1表示每周可换")
