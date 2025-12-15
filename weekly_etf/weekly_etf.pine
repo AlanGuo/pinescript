@@ -809,12 +809,13 @@ if inRange
             // 选择数据源
             float currAnchorClose = na
             int currAnchorDate = na
-            if isDelayedRebalance
-                // 延迟换仓：使用前一交易日数据
+            bool usePrevAnchorClose = isDelayedRebalance or (not useCloseRebalance and isNextDayAfterAnchorDay)
+            if usePrevAnchorClose
+                // 延迟换仓或开盘换仓: 动量仍使用锚点周收盘价（上一交易日）
                 currAnchorClose := request.security(sym, "D", close[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
                 currAnchorDate := time[1]
             else
-                // 正常换仓：使用当前bar数据
+                // 正常收盘换仓: 使用当前bar数据
                 currAnchorClose := array.get(lastBarClose, i)
                 currAnchorDate := array.get(lastBarTime, i)
 
