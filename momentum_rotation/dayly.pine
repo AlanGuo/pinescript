@@ -1,0 +1,643 @@
+//@version=6
+indicator("ETF轮动 (日动能)", overlay=false, max_lines_count=500, max_labels_count=500)
+
+// === Universe Inputs ===
+symbol1 = input.symbol("SSE:518880", "Symbol 1", group="Universe")
+name1   = input.string("黄金ETF", "Label 1", group="Universe")
+symbol2 = input.symbol("SSE:513100", "Symbol 2", group="Universe")
+name2   = input.string("纳指ETF", "Label 2", group="Universe")
+symbol3 = input.symbol("SZSE:159915", "Symbol 3", group="Universe")
+name3   = input.string("创业板ETF", "Label 3", group="Universe")
+symbol4 = input.symbol("SSE:513520", "Symbol 4", group="Universe")
+name4   = input.string("日经ETF", "Label 4", group="Universe")
+rotationCount = input.int(3, "参与轮动资产数量", minval=1, maxval=4, group="Universe", tooltip="从上面填写的资产中取前N个参与轮动")
+pricePrecision  = input.int(3, "价格精确小数位", minval=0, maxval=6, group="Universe")
+var bool[] riskOffExclude = array.new_bool()
+var bool marketRiskOff = false
+
+// === Market filter (基准均线) ===
+useMarketFilter = input.bool(false, "启用基准均线过滤", group="Market Filter", tooltip="基准指数跌破指定SMA时，可将部分品种从轮动列表中移除")
+marketFrictionPct = input.float(0.0, "均线防摩擦系数(%)", minval=0.0, maxval=20.0, step=1, group="Market Filter", tooltip="收盘需高/低于均线一定比例才算上穿/下穿，降低震荡噪声")
+forceExitOnFilter = input.bool(true, "风险过滤直接清仓", group="Market Filter", tooltip="开启后，基准跌破SMA且当前持有被标记的风险品种时，按照下方设置立即或次日开盘平仓")
+forceExitMode = input.string("次日开盘", "强平成交时点", options=["当日收盘", "次日开盘"], group="Market Filter", tooltip="强平触发时使用的成交价：固定当日收盘或次日开盘")
+marketFilterSymbol = input.symbol("SP:SPX", "基准符号", group="Market Filter")
+marketFilterLen = input.int(225, "基准SMA长度 (天)", minval=1, group="Market Filter")
+exclude1OnDown = input.bool(false, "基准跌破均线时停用Symbol1", group="Market Filter")
+exclude2OnDown = input.bool(true,  "基准跌破均线时停用Symbol2", group="Market Filter")
+exclude3OnDown = input.bool(true,  "基准跌破均线时停用Symbol3", group="Market Filter")
+exclude4OnDown = input.bool(true,  "基准跌破均线时停用Symbol4", group="Market Filter")
+
+// === Core logic inputs ===
+lookbackDays = input.int(20, "动量回顾(交易日)", minval=1, group="Logic")
+signalMaWindowInput = input.int(2, "Signal MA窗口 (0=关闭)", minval=0, group="Logic")
+signalMaWindow = signalMaWindowInput <= 1 ? 0 : signalMaWindowInput
+signalMaType = input.string("SMA", "Signal MA类型", options=["SMA", "EMA", "RMA"], group="Logic")
+entryThreshold = input.float(0.03, "Entry 阈值(绝对)", step=0.01, group="Logic")
+switchDelta = input.float(0.03, "Switch Δ(相对)", step=0.01, group="Logic")
+executionMode = input.string("收盘", "换仓时点", options=["收盘", "次日开盘"], group="Logic", tooltip="在信号日收盘成交或下一交易日开盘成交")
+useCloseRebalance = executionMode == "收盘"
+initialCapital = input.float(1, "初始净值", minval=0, group="Logic")
+backtestStart = input.time(timestamp("2014-12-25T00:00:00"), "Backtest Start", confirm=true, group="Logic")
+backtestEnd = input.time(timestamp("2099-12-31T23:59:59"), "Backtest End", confirm=true, group="Logic")
+bool inRange = time >= backtestStart and time <= backtestEnd
+
+// === Display / debug ===
+showForceExitLabel = input.bool(true, "显示强平标注", group="Display")
+showMaxDdLabel   = input.bool(true, "显示最大回撤标注", group="Display")
+showSwitchLabel  = input.bool(true, "显示换仓提示标签", group="Display")
+
+enableDdDebug = input.bool(false, "启用回撤调试日志", group="Debug")
+enableEquityDebug = input.bool(false, "启用净值调试日志", group="Debug")
+enableFloatingEquityDebug = input.bool(false, "启用浮动净值调试日志", group="Debug")
+enablePositionLog = input.bool(false, "启用仓位变动日志", group="Debug")
+enableMomentumLog = input.bool(false, "启用动量计算日志", group="Debug")
+enableFilterLog = input.bool(false, "启用基准过滤日志", group="Debug")
+enableDecisionLog = input.bool(false, "启用信号判定日志", group="Debug")
+
+formatDate(int ts) =>
+    if na(ts)
+        "N/A"
+    else
+        yearStr = str.tostring(year(ts))
+        monthVal = month(ts)
+        dayVal = dayofmonth(ts)
+        monthStr = monthVal < 10 ? "0" + str.tostring(monthVal) : str.tostring(monthVal)
+        dayStr = dayVal < 10 ? "0" + str.tostring(dayVal) : str.tostring(dayVal)
+        str.format("{0}-{1}-{2}", yearStr, monthStr, dayStr)
+
+priceScale() => math.pow(10.0, pricePrecision)
+roundPrice(float v) => na(v) ? na : math.round(v * priceScale()) / priceScale()
+fmtPrice(float v) => na(v) ? "N/A" : str.tostring(v)
+
+// === Build symbol lists ===
+var string[] tickers = array.new_string()
+var string[] labels  = array.new_string()
+if barstate.isfirst
+    array.clear(riskOffExclude)
+    array.clear(tickers)
+    array.clear(labels)
+    if str.length(symbol1) > 0
+        array.push(tickers, symbol1)
+        array.push(labels,  name1)
+        array.push(riskOffExclude, exclude1OnDown)
+    if str.length(symbol2) > 0
+        array.push(tickers, symbol2)
+        array.push(labels,  name2)
+        array.push(riskOffExclude, exclude2OnDown)
+    if str.length(symbol3) > 0
+        array.push(tickers, symbol3)
+        array.push(labels,  name3)
+        array.push(riskOffExclude, exclude3OnDown)
+    if str.length(symbol4) > 0
+        array.push(tickers, symbol4)
+        array.push(labels,  name4)
+        array.push(riskOffExclude, exclude4OnDown)
+    idx = array.size(tickers) - 1
+    while idx >= 0
+        sym = array.get(tickers, idx)
+        if str.length(sym) == 0
+            array.remove(tickers, idx)
+            array.remove(labels, idx)
+            array.remove(riskOffExclude, idx)
+        idx -= 1
+    while array.size(tickers) > rotationCount
+        array.pop(tickers)
+        array.pop(labels)
+        array.pop(riskOffExclude)
+
+assetCount = array.size(tickers)
+if assetCount == 0
+    runtime.error("请至少填写一个可交易品种")
+
+// === Per-asset storage ===
+var float[] momentumLookback = array.new_float()
+var float[] signalSeries = array.new_float()
+var float[] signalDecisionSeries = array.new_float()
+var float[] prevSignalSeries = array.new_float()
+var float[] closeSeries = array.new_float()
+var float[] openSeries = array.new_float()
+var float[] lowSeries = array.new_float()
+var int[] displayOrder = array.new_int()
+var float[] symCumReturn = array.new_float()
+var float[] symProfitSum = array.new_float()
+var float[] symLossSum = array.new_float()
+var int[] symWinCount = array.new_int()
+var int[] symTradeCount = array.new_int()
+
+if barstate.isfirst
+    array.clear(momentumLookback)
+    array.clear(signalSeries)
+    array.clear(signalDecisionSeries)
+    array.clear(prevSignalSeries)
+    array.clear(closeSeries)
+    array.clear(openSeries)
+    array.clear(lowSeries)
+    array.clear(displayOrder)
+    array.clear(symCumReturn)
+    array.clear(symProfitSum)
+    array.clear(symLossSum)
+    array.clear(symWinCount)
+    array.clear(symTradeCount)
+    for i = 0 to assetCount - 1
+        array.push(momentumLookback, na)
+        array.push(signalSeries, na)
+        array.push(signalDecisionSeries, na)
+        array.push(prevSignalSeries, na)
+        array.push(closeSeries, na)
+        array.push(openSeries, na)
+        array.push(lowSeries, na)
+        array.push(displayOrder, i)
+        array.push(symCumReturn, 1.0)
+        array.push(symProfitSum, 0.0)
+        array.push(symLossSum,   0.0)
+        array.push(symWinCount,  0)
+        array.push(symTradeCount, 0)
+
+color0  = color.new(color.orange, 50)
+color1  = color.new(color.blue, 50)
+color2  = color.new(color.red, 50)
+color3  = color.new(color.purple, 50)
+getColor(int idx) =>
+    idx == 0 ? color0 : idx == 1 ? color1 : idx == 2 ? color2 : idx == 3 ? color3 : na
+
+isSymbolEligible(int idx) =>
+    if not useMarketFilter
+        true
+    else if not marketRiskOff
+        true
+    else if idx >= array.size(riskOffExclude)
+        true
+    else
+        not array.get(riskOffExclude, idx)
+
+sanitizedSignal(float val) => na(val) ? -1e10 : val
+
+sortTableRowsBySignal() =>
+    rows = array.size(displayOrder)
+    if rows >= 2
+        for i = 0 to rows - 2
+            bestPos = i
+            bestIdx = array.get(displayOrder, bestPos)
+            bestVal = sanitizedSignal(array.get(signalSeries, bestIdx))
+            for j = i + 1 to rows - 1
+                currIdx = array.get(displayOrder, j)
+                currVal = sanitizedSignal(array.get(signalSeries, currIdx))
+                if currVal > bestVal
+                    bestPos := j
+                    bestIdx := currIdx
+                    bestVal := currVal
+            if bestPos != i
+                tmp = array.get(displayOrder, i)
+                array.set(displayOrder, i, array.get(displayOrder, bestPos))
+                array.set(displayOrder, bestPos, tmp)
+
+// === Market filter computation ===
+marketClose = request.security(marketFilterSymbol, "D", close, gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+marketDate = request.security(marketFilterSymbol, "D", time, gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+marketSma = request.security(marketFilterSymbol, "D", ta.sma(close, marketFilterLen), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+friction = marketFrictionPct * 0.01
+smaUp = marketSma * (1 + friction)
+smaDown = marketSma * (1 - friction)
+marketAboveSma = marketClose >= smaUp
+marketBelowSma = marketClose <= smaDown
+marketCrossUp = ta.crossover(marketClose, smaUp)
+marketCrossDown = ta.crossunder(marketClose, smaDown)
+if useMarketFilter and inRange and barstate.isconfirmed and (marketCrossUp or marketCrossDown)
+    dirTxt = marketCrossUp ? "上穿" : "下穿"
+    crossDateTxt = formatDate(marketDate)
+    if marketCrossDown
+        marketRiskOff := true
+    else if marketCrossUp
+        marketRiskOff := false
+    if enableFilterLog
+        log.warning(str.format("基准 {0} {1} SMA{2}±{3,number,#.##}% 交易日 {4} 收盘 {5} 上沿 {6} 下沿 {7}", marketFilterSymbol, dirTxt, marketFilterLen, marketFrictionPct, crossDateTxt, str.tostring(marketClose, format.mintick), str.tostring(smaUp, format.mintick), str.tostring(smaDown, format.mintick)))
+
+// === Tables ===
+var table infoTable = na
+var table ddTable = na
+if barstate.isfirst
+    infoTable := table.new(position.top_right, 9, assetCount + 1, border_width=1)
+    ddTable := table.new(position.bottom_right, 2, 6, border_width=1)
+
+// === Strategy state ===
+var int holdingIdx = na
+var string heldLabel = "未持仓"
+var float equity = initialCapital
+var float equityClosedSeries = initialCapital
+var float equityDailySeries = initialCapital
+var float entryPrice = na
+var float entryEquity = initialCapital
+var float holdingDays = 0
+var float lastSellPrice = na
+var float lastBuyPrice = na
+var float holdingPnlSeries = na
+var float peakEquity = initialCapital
+var float maxDrawdownSeries = 0.0
+var float currentDrawdown = 0.0
+var float rebalancePriceSeries = na
+var label lastSwitch = na
+var label maxDdLabel = na
+var bool holdingChanged = false
+var float sumTradeRet = 0.0
+var float sumTradeRetSq = 0.0
+var int tradeSamples = 0
+var bool forceExitPending = false
+var int forceExitPendingIdx = na
+var int forceExitPendingDay = na
+var float forceExitPendingBasis = na
+var string forceExitPendingNote = ""
+
+// === Per-bar computations ===
+for i = 0 to assetCount - 1
+    string sym = array.get(tickers, i)
+    float symClose = request.security(sym, "D", close, gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+    float symOpen = request.security(sym, "D", open, gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+    float symLow = request.security(sym, "D", low, gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+    float rawMomentum = request.security(sym, "D", close / close[lookbackDays] - 1, gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+    float signalValue = rawMomentum
+    if signalMaWindow > 0
+        signalValue := signalMaType == "EMA" ? request.security(sym, "D", ta.ema(close / close[lookbackDays] - 1, signalMaWindow), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off) : signalMaType == "RMA" ? request.security(sym, "D", ta.rma(close / close[lookbackDays] - 1, signalMaWindow), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off) : request.security(sym, "D", ta.sma(close / close[lookbackDays] - 1, signalMaWindow), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+    float prevSignal = array.get(prevSignalSeries, i)
+    array.set(prevSignalSeries, i, signalValue)
+    float decisionSignal = useCloseRebalance ? signalValue : prevSignal
+    array.set(momentumLookback, i, rawMomentum)
+    array.set(signalSeries, i, signalValue)
+    array.set(signalDecisionSeries, i, decisionSignal)
+    array.set(closeSeries, i, symClose)
+    array.set(openSeries, i, symOpen)
+    array.set(lowSeries, i, symLow)
+    if enableMomentumLog and barstate.isconfirmed and inRange and not na(rawMomentum)
+        log.info(str.format("{0} ({1}) {2}日动量: {3,number,#.##}% | Signal: {4,number,#.##}%", sym, array.get(labels, i), lookbackDays, rawMomentum * 100, signalValue * 100))
+
+int currDayStart = int(time("D"))
+bool forceExitExecuted = false
+bool forceExitUseClose = forceExitMode == "当日收盘"
+bool filterActive = useMarketFilter and marketRiskOff
+bool holdingRisky = not na(holdingIdx) and holdingIdx < array.size(riskOffExclude) and array.get(riskOffExclude, holdingIdx)
+
+// 次日开盘强平触发条件（设置待执行）
+if forceExitOnFilter and filterActive and holdingRisky and not forceExitUseClose and not forceExitPending
+    forceExitPending := true
+    forceExitPendingIdx := holdingIdx
+    forceExitPendingDay := currDayStart
+    forceExitPendingBasis := entryPrice
+    forceExitPendingNote := "（次日开盘清仓）"
+
+// 次日开盘执行强平
+if forceExitPending and currDayStart > forceExitPendingDay
+    int exitIdx = forceExitPendingIdx
+    if not na(exitIdx)
+        string exitSym = array.get(tickers, exitIdx)
+        string exitLabel = array.get(labels, exitIdx)
+        float exitPrice = roundPrice(array.get(openSeries, exitIdx))
+        float basisPrice = forceExitPendingBasis
+        float realized = not na(exitPrice) and not na(basisPrice) and basisPrice > 0 ? exitPrice / basisPrice - 1 : na
+        if not na(realized)
+            equity := equity * (1 + realized)
+            equityClosedSeries := equity
+            int statsIdx = exitIdx
+            float prevMul = array.get(symCumReturn, statsIdx)
+            array.set(symCumReturn, statsIdx, nz(prevMul, 1.0) * (1 + realized))
+            int prevTrades = array.get(symTradeCount, statsIdx)
+            array.set(symTradeCount, statsIdx, prevTrades + 1)
+            if realized > 0
+                array.set(symWinCount, statsIdx, array.get(symWinCount, statsIdx) + 1)
+                array.set(symProfitSum, statsIdx, array.get(symProfitSum, statsIdx) + realized)
+            else if realized < 0
+                array.set(symLossSum, statsIdx, array.get(symLossSum, statsIdx) + realized)
+            sumTradeRet += realized
+            sumTradeRetSq += realized * realized
+            tradeSamples += 1
+        holdingIdx := na
+        heldLabel := "未持仓"
+        entryPrice := na
+        entryEquity := equity
+        holdingDays := 0
+        lastSellPrice := exitPrice
+        holdingChanged := true
+        rebalancePriceSeries := exitPrice
+        forceExitExecuted := true
+        if showForceExitLabel and not na(exitPrice)
+            string exitTimeTxt = formatDate(time)
+            label.new(bar_index, equityClosedSeries, str.format("强平 {0}\n时间: {1} 开盘\n价格: {2}", exitLabel, exitTimeTxt, fmtPrice(exitPrice)), color=color.new(color.red, 0), textcolor=color.white, style=label.style_label_down, size=size.small)
+        if enablePositionLog
+            log.error(str.format("风险过滤清仓: {0} @ {1} {2}", exitLabel, fmtPrice(exitPrice), forceExitPendingNote))
+        if enableEquityDebug
+            log.error(str.format("最新净值: {0,number,#.##}", equityClosedSeries))
+    forceExitPending := false
+    forceExitPendingIdx := na
+    forceExitPendingDay := na
+    forceExitPendingBasis := na
+    forceExitPendingNote := ""
+
+// 当日收盘强平
+if forceExitOnFilter and filterActive and holdingRisky and forceExitUseClose and not forceExitExecuted
+    if not na(holdingIdx)
+        int exitIdx = holdingIdx
+        string exitSym = array.get(tickers, exitIdx)
+        string exitLabel = array.get(labels, exitIdx)
+        float exitPrice = roundPrice(array.get(closeSeries, exitIdx))
+        float basisPrice = entryPrice
+        float realized = not na(exitPrice) and not na(basisPrice) and basisPrice > 0 ? exitPrice / basisPrice - 1 : na
+        if not na(realized)
+            equity := equity * (1 + realized)
+            equityClosedSeries := equity
+            float prevMul = array.get(symCumReturn, exitIdx)
+            array.set(symCumReturn, exitIdx, nz(prevMul, 1.0) * (1 + realized))
+            int prevTrades = array.get(symTradeCount, exitIdx)
+            array.set(symTradeCount, exitIdx, prevTrades + 1)
+            if realized > 0
+                array.set(symWinCount, exitIdx, array.get(symWinCount, exitIdx) + 1)
+                array.set(symProfitSum, exitIdx, array.get(symProfitSum, exitIdx) + realized)
+            else if realized < 0
+                array.set(symLossSum, exitIdx, array.get(symLossSum, exitIdx) + realized)
+            sumTradeRet += realized
+            sumTradeRetSq += realized * realized
+            tradeSamples += 1
+        holdingIdx := na
+        heldLabel := "未持仓"
+        entryPrice := na
+        entryEquity := equity
+        holdingDays := 0
+        lastSellPrice := exitPrice
+        holdingChanged := true
+        rebalancePriceSeries := exitPrice
+        forceExitExecuted := true
+        if showForceExitLabel and not na(exitPrice)
+            string exitTimeTxt = formatDate(time)
+            label.new(bar_index, equityClosedSeries, str.format("强平 {0}\n时间: {1} 收盘\n价格: {2}", exitLabel, exitTimeTxt, fmtPrice(exitPrice)), color=color.new(color.red, 0), textcolor=color.white, style=label.style_label_down, size=size.small)
+        if enablePositionLog
+            log.error(str.format("风险过滤清仓: {0} @ {1}", exitLabel, fmtPrice(exitPrice)))
+        if enableEquityDebug
+            log.error(str.format("最新净值: {0,number,#.##}", equityClosedSeries))
+
+skipDecisionsDueToPending = forceExitPending and currDayStart == forceExitPendingDay
+
+// === Daily signal evaluation ===
+int bestIdx = na
+float bestSignal = -10e10
+for i = 0 to assetCount - 1
+    if not isSymbolEligible(i)
+        continue
+    float sig = array.get(signalDecisionSeries, i)
+    if na(sig)
+        continue
+    if sig > bestSignal
+        bestSignal := sig
+        bestIdx := i
+
+bool hadPositionPrev = not na(holdingIdx)
+int prevHoldingIdx = holdingIdx
+string prevHeldLabel = hadPositionPrev ? array.get(labels, prevHoldingIdx) : "未持仓"
+float prevEntryPrice = entryPrice
+float prevEntryEquity = entryEquity
+float currentSig = hadPositionPrev ? array.get(signalDecisionSeries, holdingIdx) : na
+float currentSigVal = na(currentSig) ? -1e10 : currentSig
+bool forcedExitChange = holdingChanged
+bool switching = false
+bool entering = false
+holdingChanged := false
+bool decisionMade = false
+string decisionMsg = ""
+string timingTxt = useCloseRebalance ? "收盘" : "次日开盘"
+bool tradeExecuted = false
+
+if inRange and barstate.isconfirmed and not skipDecisionsDueToPending
+    float bestSig = bestIdx >= 0 ? bestSignal : na
+    bool canEnter = na(holdingIdx) and not na(bestIdx) and not na(bestSig) and bestSig >= entryThreshold
+    bool canSwitch = hadPositionPrev and not na(bestIdx) and bestIdx != holdingIdx and not na(bestSig) and (bestSig - currentSigVal) >= switchDelta and bestSig > currentSigVal
+    if not hadPositionPrev and canEnter
+        entering := true
+        decisionMade := true
+    else if hadPositionPrev and canSwitch
+        switching := true
+        decisionMade := true
+    else
+        decisionMade := false
+
+    if decisionMade
+        float exitPrice = na
+        float realized = na
+        bool exitSucceeded = false
+        if switching and hadPositionPrev
+            exitPrice := roundPrice(useCloseRebalance ? array.get(closeSeries, prevHoldingIdx) : array.get(openSeries, prevHoldingIdx))
+            if not na(exitPrice) and not na(entryPrice) and entryPrice > 0
+                realized := exitPrice / entryPrice - 1
+                equity := equity * (1 + realized)
+                equityClosedSeries := equity
+                float prevMul = array.get(symCumReturn, prevHoldingIdx)
+                array.set(symCumReturn, prevHoldingIdx, nz(prevMul, 1.0) * (1 + realized))
+                int prevTrades = array.get(symTradeCount, prevHoldingIdx)
+                array.set(symTradeCount, prevHoldingIdx, prevTrades + 1)
+                if realized > 0
+                    array.set(symWinCount, prevHoldingIdx, array.get(symWinCount, prevHoldingIdx) + 1)
+                    array.set(symProfitSum, prevHoldingIdx, array.get(symProfitSum, prevHoldingIdx) + realized)
+                else if realized < 0
+                    array.set(symLossSum, prevHoldingIdx, array.get(symLossSum, prevHoldingIdx) + realized)
+                sumTradeRet += realized
+                sumTradeRetSq += realized * realized
+                tradeSamples += 1
+                exitSucceeded := true
+            else
+                switching := false
+            if exitSucceeded
+                lastSellPrice := exitPrice
+                holdingDays := 0
+                holdingIdx := na
+                heldLabel := "未持仓"
+                entryPrice := na
+                entryEquity := equity
+        float buyPrice = na
+        bool entrySucceeded = false
+        if (entering or switching) and (not switching or exitSucceeded)
+            float candidatePrice = roundPrice(useCloseRebalance ? array.get(closeSeries, bestIdx) : array.get(openSeries, bestIdx))
+            if not na(candidatePrice)
+                holdingIdx := bestIdx
+                heldLabel := array.get(labels, bestIdx)
+                entryPrice := candidatePrice
+                entryEquity := equity
+                buyPrice := candidatePrice
+                lastBuyPrice := buyPrice
+                holdingDays := 0
+                entrySucceeded := true
+            else
+                if switching and exitSucceeded and not na(realized)
+                    float revertFactor = 1 + realized
+                    if revertFactor != 0
+                        // 回滚收益到切换前
+                        equity := equity / revertFactor
+                        equityClosedSeries := equity
+                        holdingIdx := prevHoldingIdx
+                        heldLabel := prevHeldLabel
+                        entryPrice := prevEntryPrice
+                        entryEquity := prevEntryEquity
+                        float prevMulRollback = array.get(symCumReturn, prevHoldingIdx)
+                        array.set(symCumReturn, prevHoldingIdx, nz(prevMulRollback, 1.0) / revertFactor)
+                        int prevTradesRollback = array.get(symTradeCount, prevHoldingIdx)
+                        array.set(symTradeCount, prevHoldingIdx, math.max(prevTradesRollback - 1, 0))
+                        if realized > 0
+                            array.set(symWinCount, prevHoldingIdx, math.max(array.get(symWinCount, prevHoldingIdx) - 1, 0))
+                            array.set(symProfitSum, prevHoldingIdx, array.get(symProfitSum, prevHoldingIdx) - realized)
+                        else if realized < 0
+                            array.set(symLossSum, prevHoldingIdx, array.get(symLossSum, prevHoldingIdx) - realized)
+                        sumTradeRet -= realized
+                        sumTradeRetSq -= realized * realized
+                        tradeSamples := math.max(tradeSamples - 1, 0)
+                entering := false
+                switching := false
+                exitSucceeded := false
+                lastSellPrice := na
+        if entrySucceeded
+            rebalancePriceSeries := entryPrice
+        tradeExecuted := entrySucceeded
+        if enablePositionLog and tradeExecuted
+            if entering and not switching
+                decisionMsg := str.format("开仓[{0}]: {1} @ {2}", timingTxt, heldLabel, fmtPrice(lastBuyPrice))
+            else
+                decisionMsg := str.format("换仓[{0}]: {1} @ {2} -> {3} @ {4}", timingTxt, prevHeldLabel, fmtPrice(exitPrice), heldLabel, fmtPrice(lastBuyPrice))
+            log.error(decisionMsg)
+        if showSwitchLabel and tradeExecuted
+            if not na(lastSwitch)
+                label.delete(lastSwitch)
+            labelText = decisionMsg
+            if str.length(labelText) == 0
+                labelText := entering and not switching ? str.format("开仓[{0}] {1}", timingTxt, heldLabel) : str.format("换仓[{0}] {1} -> {2}", timingTxt, prevHeldLabel, heldLabel)
+            if str.length(labelText) > 0
+                lastSwitch := label.new(bar_index, equityClosedSeries, labelText, color=color.new(color.blue, 0), textcolor=color.white, style=label.style_label_up)
+                alert(labelText, alert.freq_once_per_bar)
+        if not tradeExecuted and hadPositionPrev
+            holdingDays += 1
+    else
+        if hadPositionPrev
+            holdingDays += 1
+else
+    if hadPositionPrev and not forceExitExecuted
+        holdingDays += 1
+
+holdingChanged := forcedExitChange or tradeExecuted
+
+if enableDecisionLog and inRange and barstate.isconfirmed
+    string bestName = not na(bestIdx) ? array.get(labels, bestIdx) : "无可选"
+    string currName = hadPositionPrev ? prevHeldLabel : "未持仓"
+    float bestPct = not na(bestSignal) ? bestSignal * 100 : na
+    float currPct = na(currentSig) ? na : currentSig * 100
+    string actionTxt = tradeExecuted ? (hadPositionPrev ? "换仓" : "开仓") : forceExitExecuted ? "强平" : (hadPositionPrev ? "继续持有" : "空仓")
+    log.warning(str.format("信号判定: best={0} {1,number,#.##}% | current={2} {3,number,#.##}% | action={4}", bestName, bestPct, currName, currPct, actionTxt))
+
+if not holdingChanged
+    rebalancePriceSeries := na
+
+// === 浮动净值与回撤 ===
+if not na(holdingIdx)
+    float currClose = roundPrice(array.get(closeSeries, holdingIdx))
+    if not na(currClose) and not na(entryPrice) and entryPrice > 0
+        float dailyReturn = currClose / entryPrice - 1
+        equityDailySeries := entryEquity * (1 + dailyReturn)
+        holdingPnlSeries := dailyReturn
+    else
+        equityDailySeries := equityClosedSeries
+        holdingPnlSeries := na
+else
+    equityDailySeries := equityClosedSeries
+    holdingPnlSeries := na
+
+float equityLowToday = equityClosedSeries
+if not na(holdingIdx)
+    float currLow = roundPrice(array.get(lowSeries, holdingIdx))
+    if not na(currLow) and not na(entryPrice) and entryPrice > 0
+        float lowReturn = currLow / entryPrice - 1
+        equityLowToday := entryEquity * (1 + lowReturn)
+
+if not na(peakEquity) and peakEquity > 0
+    currentDrawdown := (equityLowToday - peakEquity) / peakEquity
+else
+    currentDrawdown := 0.0
+prevMaxDd = nz(maxDrawdownSeries[1], 0.0)
+bool isNewMaxDrawdown = currentDrawdown < prevMaxDd
+maxDrawdownSeries := isNewMaxDrawdown ? currentDrawdown : prevMaxDd
+if enableDdDebug and barstate.isconfirmed and not na(currentDrawdown) and currentDrawdown < 0
+    log.warning(str.format("当前回撤: {0,number,#.##}% | 最高净值: {1,number,#.##} | 回撤净值: {2,number,#.##}", currentDrawdown * 100, peakEquity, equityLowToday))
+if (holdingChanged or forceExitExecuted) and equityClosedSeries > peakEquity
+    peakEquity := equityClosedSeries
+    if enableEquityDebug
+        log.warning(str.format("净值新高: {0,number,#.##}", equityClosedSeries))
+if isNewMaxDrawdown and showMaxDdLabel
+    if not na(maxDdLabel)
+        label.delete(maxDdLabel)
+    maxDdLabel := label.new(bar_index, equityClosedSeries, str.format("最大回撤刷新 {0,number,#.##}%", currentDrawdown * 100), color=color.new(color.maroon, 0), textcolor=color.white, style=label.style_label_down)
+else if not showMaxDdLabel and not na(maxDdLabel)
+    label.delete(maxDdLabel)
+    maxDdLabel := na
+
+holdingColor = not na(holdingIdx) ? getColor(holdingIdx) : color.orange
+
+msPerYear = 365.25 * 24 * 60 * 60 * 1000.0
+elapsedYears = (time - backtestStart) / msPerYear
+annReturn = elapsedYears > 0 and initialCapital > 0 and equityClosedSeries > 0 ? math.pow(equityClosedSeries / initialCapital, 1.0 / elapsedYears) - 1 : na
+meanRet = tradeSamples > 0 ? sumTradeRet / tradeSamples : na
+variance = tradeSamples > 0 ? sumTradeRetSq / tradeSamples - (meanRet * meanRet) : na
+variance := variance < 0 ? 0 : variance
+stdRet = not na(variance) ? math.sqrt(variance) : na
+sharpeAnnual = tradeSamples > 1 and stdRet > 0 ? (meanRet / stdRet) * math.sqrt(252) : na
+
+if barstate.islast
+    table.cell(infoTable, 0, 0, "品种", text_color=color.white, bgcolor=color.new(color.blue, 40))
+    table.cell(infoTable, 1, 0, str.format("{0}日动量", lookbackDays), text_color=color.white, bgcolor=color.new(color.blue, 40))
+    table.cell(infoTable, 2, 0, "Signal", text_color=color.white, bgcolor=color.new(color.blue, 40))
+    table.cell(infoTable, 3, 0, "收盘", text_color=color.white, bgcolor=color.new(color.blue, 40))
+    table.cell(infoTable, 4, 0, "开盘", text_color=color.white, bgcolor=color.new(color.blue, 40))
+    table.cell(infoTable, 5, 0, "累计盈亏", text_color=color.white, bgcolor=color.new(color.blue, 40))
+    table.cell(infoTable, 6, 0, "胜率", text_color=color.white, bgcolor=color.new(color.blue, 40))
+    table.cell(infoTable, 7, 0, "盈亏比", text_color=color.white, bgcolor=color.new(color.blue, 40))
+    table.cell(infoTable, 8, 0, "过滤", text_color=color.white, bgcolor=color.new(color.blue, 40))
+    sortTableRowsBySignal()
+    for rank = 0 to assetCount - 1
+        row = rank + 1
+        symIdx = array.get(displayOrder, rank)
+        lbl = array.get(labels, symIdx)
+        mom = array.get(momentumLookback, symIdx)
+        sig = array.get(signalSeries, symIdx)
+        cls = array.get(closeSeries, symIdx)
+        opn = array.get(openSeries, symIdx)
+        isHeld = not na(holdingIdx) and holdingIdx == symIdx
+        blocked = not isSymbolEligible(symIdx)
+        bg = blocked ? color.new(color.gray, 80) : (isHeld ? color.new(color.orange, 50) : color.new(color.black, 0))
+        text_color = isHeld ? color.new(color.black, 0) : color.new(color.white, 0)
+        cumMul = array.get(symCumReturn, symIdx)
+        tradesCnt = array.get(symTradeCount, symIdx)
+        winsCnt = array.get(symWinCount, symIdx)
+        profSum = array.get(symProfitSum, symIdx)
+        lossSum = array.get(symLossSum, symIdx)
+        totalPctSym = (nz(cumMul, 1.0) - 1) * 100
+        winRateSym = tradesCnt > 0 ? winsCnt * 100.0 / tradesCnt : na
+        profitFactor = lossSum < 0 ? profSum / math.abs(lossSum) : na
+        table.cell(infoTable, 0, row, lbl, bgcolor=bg, text_color = text_color)
+        table.cell(infoTable, 1, row, na(mom) ? "N/A" : str.tostring(mom * 100, format.mintick) + "%", bgcolor=bg, text_color = text_color)
+        table.cell(infoTable, 2, row, na(sig) ? "N/A" : str.tostring(sig * 100, format.mintick) + "%", bgcolor=bg, text_color = text_color)
+        table.cell(infoTable, 3, row, str.tostring(cls, format.mintick), bgcolor=bg, text_color = text_color)
+        table.cell(infoTable, 4, row, str.tostring(opn, format.mintick), bgcolor=bg, text_color = text_color)
+        table.cell(infoTable, 5, row, str.format("{0,number,#.##}%", totalPctSym), bgcolor=bg, text_color = text_color)
+        table.cell(infoTable, 6, row, na(winRateSym) ? "N/A" : str.format("{0,number,#.##}%", winRateSym), bgcolor=bg, text_color = text_color)
+        table.cell(infoTable, 7, row, na(profitFactor) ? "N/A" : str.tostring(profitFactor, format.mintick), bgcolor=bg, text_color = text_color)
+        table.cell(infoTable, 8, row, blocked ? "停用" : "—", bgcolor=bg, text_color = text_color)
+    startText = formatDate(backtestStart)
+    endText = formatDate(backtestEnd)
+    table.cell(ddTable, 0, 0, "指标", text_color=color.white, bgcolor=color.new(color.blue, 40))
+    table.cell(ddTable, 1, 0, "数值", text_color=color.white, bgcolor=color.new(color.blue, 40))
+    table.cell(ddTable, 0, 1, "最大回撤", bgcolor=color.new(color.black, 0), text_color=color.white)
+    table.cell(ddTable, 1, 1, str.format("{0,number,#.##}%", maxDrawdownSeries * 100), text_color=color.red)
+    table.cell(ddTable, 0, 2, "最终净值", bgcolor=color.new(color.black, 0), text_color=color.white)
+    table.cell(ddTable, 1, 2, str.format("{0,number,#.##}", nz(equityClosedSeries, 0)), text_color=color.green)
+    table.cell(ddTable, 0, 3, "回测范围", bgcolor=color.new(color.black, 0), text_color=color.white)
+    table.cell(ddTable, 1, 3, str.format("{0} 至 {1}", startText, endText), text_color=color.black)
+    table.cell(ddTable, 0, 4, "年化收益率", bgcolor=color.new(color.black, 0), text_color=color.white)
+    table.cell(ddTable, 1, 4, na(annReturn) ? "N/A" : str.format("{0,number,#.##}%", annReturn * 100), text_color=color.black)
+    table.cell(ddTable, 0, 5, "夏普比率(年化)", bgcolor=color.new(color.black, 0), text_color=color.white)
+    table.cell(ddTable, 1, 5, na(sharpeAnnual) ? "N/A" : str.tostring(sharpeAnnual, format.mintick), text_color=color.black)
+
+plot(equityClosedSeries, title="Simulated Equity", color=color.teal, linewidth=2)
+plot(equityDailySeries, title="Daily Trial Equity", color=color.new(color.gray, 0), linewidth=1, style=plot.style_line, linestyle = plot.linestyle_dotted, display=display.all)
+plot(currentDrawdown < 0 ? currentDrawdown * 100 : na, title="Current Drawdown (%)", color=color.new(color.red, 70), linewidth=1, style=plot.style_area, display=display.all, format=format.price, precision=2)
+plot(maxDrawdownSeries * 100, title="Max Drawdown To Date (%)", color=color.new(color.red, 40), linewidth=1, style=plot.style_stepline, display=display.all, format=format.price, precision=2)
+plot(holdingPnlSeries * 100, title="Holding PnL (%)", color=holdingColor, style=plot.style_columns)
+plot(rebalancePriceSeries, title="Rebalance Price", color=holdingColor, display=display.status_line)
