@@ -232,6 +232,7 @@ var float lastSellPrice = na
 var float lastBuyPrice = na
 var float holdingPnlSeries = na
 var float peakEquity = initialCapital
+var float lastLoggedEquity = na
 var float maxDrawdownSeries = 0.0
 var float currentDrawdown = 0.0
 var float rebalancePriceSeries = na
@@ -274,6 +275,7 @@ bool forceExitExecuted = false
 bool forceExitUseClose = forceExitMode == "当日收盘"
 bool filterActive = useMarketFilter and marketRiskOff
 bool holdingRisky = not na(holdingIdx) and holdingIdx < array.size(riskOffExclude) and array.get(riskOffExclude, holdingIdx)
+bool forcedExitChange = false
 
 // 次日开盘强平触发条件（设置待执行）
 if forceExitOnFilter and filterActive and holdingRisky and not forceExitUseClose and not forceExitPending
@@ -315,6 +317,7 @@ if forceExitPending and currDayStart > forceExitPendingDay
         holdingDays := 0
         lastSellPrice := exitPrice
         holdingChanged := true
+        forcedExitChange := true
         rebalancePriceSeries := exitPrice
         forceExitExecuted := true
         if showForceExitLabel and not na(exitPrice)
@@ -361,6 +364,7 @@ if forceExitOnFilter and filterActive and holdingRisky and forceExitUseClose and
         holdingDays := 0
         lastSellPrice := exitPrice
         holdingChanged := true
+        forcedExitChange := true
         rebalancePriceSeries := exitPrice
         forceExitExecuted := true
         if showForceExitLabel and not na(exitPrice)
@@ -393,7 +397,6 @@ float prevEntryPrice = entryPrice
 float prevEntryEquity = entryEquity
 float currentSig = hadPositionPrev ? array.get(signalDecisionSeries, holdingIdx) : na
 float currentSigVal = na(currentSig) ? -1e10 : currentSig
-bool forcedExitChange = holdingChanged
 bool switching = false
 bool entering = false
 holdingChanged := false
@@ -490,21 +493,20 @@ if inRange and barstate.isconfirmed and not skipDecisionsDueToPending
         if entrySucceeded
             rebalancePriceSeries := entryPrice
         tradeExecuted := entrySucceeded
-        if enablePositionLog and tradeExecuted
+        if tradeExecuted
             if entering and not switching
                 decisionMsg := str.format("开仓[{0}]: {1} @ {2}", timingTxt, heldLabel, fmtPrice(lastBuyPrice))
-            else
+            else if switching
                 decisionMsg := str.format("换仓[{0}]: {1} @ {2} -> {3} @ {4}", timingTxt, prevHeldLabel, fmtPrice(exitPrice), heldLabel, fmtPrice(lastBuyPrice))
-            log.error(decisionMsg)
-        if showSwitchLabel and tradeExecuted
-            if not na(lastSwitch)
-                label.delete(lastSwitch)
-            labelText = decisionMsg
-            if str.length(labelText) == 0
-                labelText := entering and not switching ? str.format("开仓[{0}] {1}", timingTxt, heldLabel) : str.format("换仓[{0}] {1} -> {2}", timingTxt, prevHeldLabel, heldLabel)
-            if str.length(labelText) > 0
-                lastSwitch := label.new(bar_index, equityClosedSeries, labelText, color=color.new(color.blue, 0), textcolor=color.white, style=label.style_label_up)
-                alert(labelText, alert.freq_once_per_bar)
+            else
+                decisionMsg := str.format("平仓[{0}]: {1} @ {2}", timingTxt, prevHeldLabel, fmtPrice(exitPrice))
+            if enablePositionLog
+                log.error(decisionMsg)
+            if showSwitchLabel and str.length(decisionMsg) > 0
+                if not na(lastSwitch)
+                    label.delete(lastSwitch)
+                lastSwitch := label.new(bar_index, equityClosedSeries, decisionMsg, color=color.new(color.blue, 0), textcolor=color.white, style=label.style_label_up)
+                alert(decisionMsg, alert.freq_once_per_bar)
         if not tradeExecuted and hadPositionPrev
             holdingDays += 1
     else
@@ -515,6 +517,7 @@ else
         holdingDays += 1
 
 holdingChanged := forcedExitChange or tradeExecuted
+bool tradeMarkerThisBar = holdingChanged
 
 if enableDecisionLog and inRange and barstate.isconfirmed
     string bestName = not na(bestIdx) ? array.get(labels, bestIdx) : "无可选"
@@ -557,10 +560,17 @@ bool isNewMaxDrawdown = currentDrawdown < prevMaxDd
 maxDrawdownSeries := isNewMaxDrawdown ? currentDrawdown : prevMaxDd
 if enableDdDebug and barstate.isconfirmed and not na(currentDrawdown) and currentDrawdown < 0
     log.warning(str.format("当前回撤: {0,number,#.##}% | 最高净值: {1,number,#.##} | 回撤净值: {2,number,#.##}", currentDrawdown * 100, peakEquity, equityLowToday))
-if (holdingChanged or forceExitExecuted) and equityClosedSeries > peakEquity
-    peakEquity := equityClosedSeries
+if (holdingChanged or forceExitExecuted) and not na(equityClosedSeries)
+    bool isNewHigh = equityClosedSeries > peakEquity
     if enableEquityDebug
-        log.warning(str.format("净值新高: {0,number,#.##}", equityClosedSeries))
+        float prevLogged = na(lastLoggedEquity) ? equityClosedSeries : lastLoggedEquity
+        if na(lastLoggedEquity) or equityClosedSeries != lastLoggedEquity
+            log.warning(str.format("净值更新: {0,number,#.###} -> {1,number,#.###}", prevLogged, equityClosedSeries))
+        if isNewHigh
+            log.error(str.format("净值新高: {0,number,#.###}", equityClosedSeries))
+        lastLoggedEquity := equityClosedSeries
+    if isNewHigh
+        peakEquity := equityClosedSeries
 if isNewMaxDrawdown and showMaxDdLabel
     if not na(maxDdLabel)
         label.delete(maxDdLabel)
@@ -634,6 +644,10 @@ if barstate.islast
     table.cell(ddTable, 1, 4, na(annReturn) ? "N/A" : str.format("{0,number,#.##}%", annReturn * 100), text_color=color.black)
     table.cell(ddTable, 0, 5, "夏普比率(年化)", bgcolor=color.new(color.black, 0), text_color=color.white)
     table.cell(ddTable, 1, 5, na(sharpeAnnual) ? "N/A" : str.tostring(sharpeAnnual, format.mintick), text_color=color.black)
+
+showTradeMarker = tradeMarkerThisBar and inRange and barstate.isconfirmed
+markerColor = not na(holdingIdx) ? holdingColor : color.new(color.gray, 0)
+plotchar(showTradeMarker, title="Trade Marker", char="●", location=location.bottom, color=markerColor, size=size.tiny)
 
 plot(equityClosedSeries, title="Simulated Equity", color=color.teal, linewidth=2)
 plot(equityDailySeries, title="Daily Trial Equity", color=color.new(color.gray, 0), linewidth=1, style=plot.style_line, linestyle = plot.linestyle_dotted, display=display.all)
