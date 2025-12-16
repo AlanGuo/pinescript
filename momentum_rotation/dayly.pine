@@ -558,7 +558,7 @@ else
 prevMaxDd = nz(maxDrawdownSeries[1], 0.0)
 bool isNewMaxDrawdown = currentDrawdown < prevMaxDd
 maxDrawdownSeries := isNewMaxDrawdown ? currentDrawdown : prevMaxDd
-if enableDdDebug and barstate.isconfirmed and not na(currentDrawdown) and currentDrawdown < 0
+if enableDdDebug and barstate.islastconfirmedhistory and not na(currentDrawdown) and currentDrawdown < 0
     log.warning(str.format("当前回撤: {0,number,#.##}% | 最高净值: {1,number,#.##} | 回撤净值: {2,number,#.##}", currentDrawdown * 100, peakEquity, equityLowToday))
 if (holdingChanged or forceExitExecuted) and not na(equityClosedSeries)
     bool isNewHigh = equityClosedSeries > peakEquity
