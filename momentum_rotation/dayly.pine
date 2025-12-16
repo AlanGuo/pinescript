@@ -29,11 +29,11 @@ exclude4OnDown = input.bool(true,  "基准跌破均线时停用Symbol4", group="
 
 // === Core logic inputs ===
 lookbackDays = input.int(20, "动量回顾(交易日)", minval=1, group="Logic")
-signalMaWindowInput = input.int(2, "Signal MA窗口 (0=关闭)", minval=0, group="Logic")
+signalMaWindowInput = input.int(3, "Signal MA窗口 (0=关闭)", minval=0, group="Logic")
 signalMaWindow = signalMaWindowInput <= 1 ? 0 : signalMaWindowInput
 signalMaType = input.string("SMA", "Signal MA类型", options=["SMA", "EMA", "RMA"], group="Logic")
 entryThreshold = input.float(0.03, "Entry 阈值(绝对)", step=0.01, group="Logic")
-switchDelta = input.float(0.03, "Switch Δ(相对)", step=0.01, group="Logic")
+switchDelta = input.float(0.02, "Switch Δ(相对)", step=0.01, group="Logic")
 executionMode = input.string("收盘", "换仓时点", options=["收盘", "次日开盘"], group="Logic", tooltip="在信号日收盘成交或下一交易日开盘成交")
 useCloseRebalance = executionMode == "收盘"
 initialCapital = input.float(1, "初始净值", minval=0, group="Logic")
