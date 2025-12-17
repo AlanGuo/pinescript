@@ -591,9 +591,12 @@ stdRet = not na(variance) ? math.sqrt(variance) : na
 sharpeAnnual = tradeSamples > 1 and stdRet > 0 ? (meanRet / stdRet) * math.sqrt(252) : na
 
 if barstate.islast
+    string signalSmoothDesc = signalMaWindow > 0 ? str.format("{0}({1})", signalMaType, signalMaWindow) : "原始值"
+    string signalParamDetail = str.format("平滑: {0}", signalSmoothDesc)
+    string signalColumnHeader = str.format("Signal\n{0}", signalParamDetail)
     table.cell(infoTable, 0, 0, "品种", text_color=color.white, bgcolor=color.new(color.blue, 40))
     table.cell(infoTable, 1, 0, str.format("{0}日动量", lookbackDays), text_color=color.white, bgcolor=color.new(color.blue, 40))
-    table.cell(infoTable, 2, 0, "Signal", text_color=color.white, bgcolor=color.new(color.blue, 40))
+    table.cell(infoTable, 2, 0, signalColumnHeader, text_color=color.white, bgcolor=color.new(color.blue, 40))
     table.cell(infoTable, 3, 0, "收盘", text_color=color.white, bgcolor=color.new(color.blue, 40))
     table.cell(infoTable, 4, 0, "开盘", text_color=color.white, bgcolor=color.new(color.blue, 40))
     table.cell(infoTable, 5, 0, "累计盈亏", text_color=color.white, bgcolor=color.new(color.blue, 40))
