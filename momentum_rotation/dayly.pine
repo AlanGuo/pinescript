@@ -36,7 +36,7 @@ entryThreshold = input.float(0.03, "Entry 阈值(绝对)", step=0.01, group="Log
 switchDelta = input.float(0.02, "Switch Δ(相对)", step=0.01, group="Logic")
 executionMode = input.string("收盘", "换仓时点", options=["收盘", "次日开盘"], group="Logic", tooltip="在信号日收盘成交或下一交易日开盘成交")
 useCloseRebalance = executionMode == "收盘"
-initialCapital = input.float(1, "初始净值", minval=0, group="Logic")
+initialEquity = input.float(1, "初始净值", minval=0, group="Logic")
 backtestStart = input.time(timestamp("2014-12-25T00:00:00"), "Backtest Start", confirm=true, group="Logic")
 backtestEnd = input.time(timestamp("2099-12-31T23:59:59"), "Backtest End", confirm=true, group="Logic")
 bool inRange = time >= backtestStart and time <= backtestEnd
@@ -222,16 +222,16 @@ if barstate.isfirst
 // === Strategy state ===
 var int holdingIdx = na
 var string heldLabel = "未持仓"
-var float equity = initialCapital
-var float equityClosedSeries = initialCapital
-var float equityDailySeries = initialCapital
+var float equity = initialEquity
+var float equityClosedSeries = initialEquity
+var float equityDailySeries = initialEquity
 var float entryPrice = na
-var float entryEquity = initialCapital
+var float entryEquity = initialEquity
 var float holdingDays = 0
 var float lastSellPrice = na
 var float lastBuyPrice = na
 var float holdingPnlSeries = na
-var float peakEquity = initialCapital
+var float peakEquity = initialEquity
 var float lastLoggedEquity = na
 var float maxDrawdownSeries = 0.0
 var float currentDrawdown = 0.0
@@ -583,7 +583,7 @@ holdingColor = not na(holdingIdx) ? getColor(holdingIdx) : color.orange
 
 msPerYear = 365.25 * 24 * 60 * 60 * 1000.0
 elapsedYears = (time - backtestStart) / msPerYear
-annReturn = elapsedYears > 0 and initialCapital > 0 and equityClosedSeries > 0 ? math.pow(equityClosedSeries / initialCapital, 1.0 / elapsedYears) - 1 : na
+annReturn = elapsedYears > 0 and initialEquity > 0 and equityClosedSeries > 0 ? math.pow(equityClosedSeries / initialEquity, 1.0 / elapsedYears) - 1 : na
 meanRet = tradeSamples > 0 ? sumTradeRet / tradeSamples : na
 variance = tradeSamples > 0 ? sumTradeRetSq / tradeSamples - (meanRet * meanRet) : na
 variance := variance < 0 ? 0 : variance
