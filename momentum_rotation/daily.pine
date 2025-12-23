@@ -50,9 +50,9 @@ bool inRange = time >= backtestStart and time <= backtestEnd
 // === Display / debug ===
 showForceExitLabel = input.bool(true, "显示强平标注", group="Display")
 showMaxDdLabel   = input.bool(true, "显示最大回撤标注", group="Display")
-showSwitchLabel  = input.bool(true, "仓位操作提醒(标签+alert)", group="Display", tooltip="开仓/换仓/平仓/强平的成交提醒；关闭后不显示相关标签且不触发成交 alert")
 
 // === Alerts ===
+showSwitchLabel  = input.bool(true, "仓位操作提醒(标签+alert)", group="Alert", tooltip="开仓/换仓/平仓/强平的成交提醒；关闭后不显示相关标签且不触发成交 alert")
 enableIntradayPreAlert = input.bool(true, "盘中预警(标签+alert)", group="Alert", tooltip="日内实时预警（包含：收盘换仓盘中预警 + 强平盘中预警）；开启后会同时触发 alert 并在图上绘制预警标签；预警基于未收盘的当日价格计算，可能在收盘前失效/反复")
 
 enableDdDebug = input.bool(false, "启用回撤调试日志", group="Debug")
