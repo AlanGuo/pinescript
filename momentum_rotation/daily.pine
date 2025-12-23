@@ -27,6 +27,12 @@ exclude2OnDown = input.bool(true,  "基准跌破均线时停用Symbol2", group="
 exclude3OnDown = input.bool(true,  "基准跌破均线时停用Symbol3", group="Market Filter")
 exclude4OnDown = input.bool(true,  "基准跌破均线时停用Symbol4", group="Market Filter")
 
+fallbackSymbol = marketFilterSymbol
+sym1Safe = str.length(symbol1) > 0 ? symbol1 : fallbackSymbol
+sym2Safe = str.length(symbol2) > 0 ? symbol2 : fallbackSymbol
+sym3Safe = str.length(symbol3) > 0 ? symbol3 : fallbackSymbol
+sym4Safe = str.length(symbol4) > 0 ? symbol4 : fallbackSymbol
+
 // === Core logic inputs ===
 lookbackDays = input.int(20, "动量回顾(交易日)", minval=1, group="Logic")
 signalMaWindowInput = input.int(3, "Signal MA窗口 (0=关闭)", minval=0, group="Logic")
@@ -44,7 +50,10 @@ bool inRange = time >= backtestStart and time <= backtestEnd
 // === Display / debug ===
 showForceExitLabel = input.bool(true, "显示强平标注", group="Display")
 showMaxDdLabel   = input.bool(true, "显示最大回撤标注", group="Display")
-showSwitchLabel  = input.bool(true, "显示换仓提示标签", group="Display")
+showSwitchLabel  = input.bool(true, "仓位操作提醒(标签+alert)", group="Display", tooltip="开仓/换仓/平仓/强平的成交提醒；关闭后不显示相关标签且不触发成交 alert")
+
+// === Alerts ===
+enableIntradayPreAlert = input.bool(true, "盘中预警(标签+alert)", group="Alert", tooltip="日内实时预警（包含：收盘换仓盘中预警 + 强平盘中预警）；开启后会同时触发 alert 并在图上绘制预警标签；预警基于未收盘的当日价格计算，可能在收盘前失效/反复")
 
 enableDdDebug = input.bool(false, "启用回撤调试日志", group="Debug")
 enableEquityDebug = input.bool(false, "启用净值调试日志", group="Debug")
@@ -72,26 +81,32 @@ fmtPrice(float v) => na(v) ? "N/A" : str.tostring(v)
 // === Build symbol lists ===
 var string[] tickers = array.new_string()
 var string[] labels  = array.new_string()
+var int[] tickerSlots = array.new_int()
 if barstate.isfirst
     array.clear(riskOffExclude)
     array.clear(tickers)
     array.clear(labels)
+    array.clear(tickerSlots)
     if str.length(symbol1) > 0
         array.push(tickers, symbol1)
         array.push(labels,  name1)
         array.push(riskOffExclude, exclude1OnDown)
+        array.push(tickerSlots, 1)
     if str.length(symbol2) > 0
         array.push(tickers, symbol2)
         array.push(labels,  name2)
         array.push(riskOffExclude, exclude2OnDown)
+        array.push(tickerSlots, 2)
     if str.length(symbol3) > 0
         array.push(tickers, symbol3)
         array.push(labels,  name3)
         array.push(riskOffExclude, exclude3OnDown)
+        array.push(tickerSlots, 3)
     if str.length(symbol4) > 0
         array.push(tickers, symbol4)
         array.push(labels,  name4)
         array.push(riskOffExclude, exclude4OnDown)
+        array.push(tickerSlots, 4)
     idx = array.size(tickers) - 1
     while idx >= 0
         sym = array.get(tickers, idx)
@@ -99,11 +114,13 @@ if barstate.isfirst
             array.remove(tickers, idx)
             array.remove(labels, idx)
             array.remove(riskOffExclude, idx)
+            array.remove(tickerSlots, idx)
         idx -= 1
     while array.size(tickers) > rotationCount
         array.pop(tickers)
         array.pop(labels)
         array.pop(riskOffExclude)
+        array.pop(tickerSlots)
 
 assetCount = array.size(tickers)
 if assetCount == 0
@@ -191,13 +208,63 @@ sortTableRowsBySignal() =>
                 array.set(displayOrder, i, array.get(displayOrder, bestPos))
                 array.set(displayOrder, bestPos, tmp)
 
+pickFloat(int slot, float v1, float v2, float v3, float v4) =>
+    slot == 1 ? v1 : slot == 2 ? v2 : slot == 3 ? v3 : slot == 4 ? v4 : na
+
+int maLenSafe = math.max(signalMaWindow, 1)
+
+calcMomentum() =>
+    close / close[lookbackDays] - 1
+
+calcSignal() =>
+    m = close / close[lookbackDays] - 1
+    ema = ta.ema(m, maLenSafe)
+    rma = ta.rma(m, maLenSafe)
+    sma = ta.sma(m, maLenSafe)
+    signalMaWindow > 0 ? (signalMaType == "EMA" ? ema : signalMaType == "RMA" ? rma : sma) : m
+
+// === Precomputed daily series (lookahead_off) ===
+dClose1 = request.security(sym1Safe, "D", close, gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+dOpen1  = request.security(sym1Safe, "D", open,  gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+dLow1   = request.security(sym1Safe, "D", low,   gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+dMom1   = request.security(sym1Safe, "D", calcMomentum(), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+dSig1   = request.security(sym1Safe, "D", calcSignal(), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+
+dClose2 = request.security(sym2Safe, "D", close, gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+dOpen2  = request.security(sym2Safe, "D", open,  gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+dLow2   = request.security(sym2Safe, "D", low,   gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+dMom2   = request.security(sym2Safe, "D", calcMomentum(), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+dSig2   = request.security(sym2Safe, "D", calcSignal(), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+
+dClose3 = request.security(sym3Safe, "D", close, gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+dOpen3  = request.security(sym3Safe, "D", open,  gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+dLow3   = request.security(sym3Safe, "D", low,   gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+dMom3   = request.security(sym3Safe, "D", calcMomentum(), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+dSig3   = request.security(sym3Safe, "D", calcSignal(), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+
+dClose4 = request.security(sym4Safe, "D", close, gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+dOpen4  = request.security(sym4Safe, "D", open,  gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+dLow4   = request.security(sym4Safe, "D", low,   gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+dMom4   = request.security(sym4Safe, "D", calcMomentum(), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+dSig4   = request.security(sym4Safe, "D", calcSignal(), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+
+// === Precomputed daily series for intraday pre-alert (lookahead_on) ===
+preSig1 = request.security(sym1Safe, "D", calcSignal(), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
+preSig2 = request.security(sym2Safe, "D", calcSignal(), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
+preSig3 = request.security(sym3Safe, "D", calcSignal(), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
+preSig4 = request.security(sym4Safe, "D", calcSignal(), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
+
 // === Market filter computation ===
 marketClose = request.security(marketFilterSymbol, "D", close, gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
 marketDate = request.security(marketFilterSymbol, "D", time, gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
 marketSma = request.security(marketFilterSymbol, "D", ta.sma(close, marketFilterLen), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+marketClosePre = request.security(marketFilterSymbol, "D", close, gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
+marketSmaPre = request.security(marketFilterSymbol, "D", ta.sma(close, marketFilterLen), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
 friction = marketFrictionPct * 0.01
 smaUp = marketSma * (1 + friction)
 smaDown = marketSma * (1 - friction)
+marketSmaDownPre = marketSmaPre * (1 - friction)
+marketWouldRiskOffPre = marketClosePre <= marketSmaDownPre
 marketAboveSma = marketClose >= smaUp
 marketBelowSma = marketClose <= smaDown
 marketCrossUp = ta.crossover(marketClose, smaUp)
@@ -238,6 +305,10 @@ var float currentDrawdown = 0.0
 var float rebalancePriceSeries = na
 var label lastSwitch = na
 var label maxDdLabel = na
+var int preAlertDay = na
+var string preAlertLastMsg = ""
+var int forcePreAlertDay = na
+var string forcePreAlertLastMsg = ""
 var bool holdingChanged = false
 var float sumTradeRet = 0.0
 var float sumTradeRetSq = 0.0
@@ -251,13 +322,12 @@ var string forceExitPendingNote = ""
 // === Per-bar computations ===
 for i = 0 to assetCount - 1
     string sym = array.get(tickers, i)
-    float symClose = request.security(sym, "D", close, gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
-    float symOpen = request.security(sym, "D", open, gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
-    float symLow = request.security(sym, "D", low, gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
-    float rawMomentum = request.security(sym, "D", close / close[lookbackDays] - 1, gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
-    float signalValue = rawMomentum
-    if signalMaWindow > 0
-        signalValue := signalMaType == "EMA" ? request.security(sym, "D", ta.ema(close / close[lookbackDays] - 1, signalMaWindow), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off) : signalMaType == "RMA" ? request.security(sym, "D", ta.rma(close / close[lookbackDays] - 1, signalMaWindow), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off) : request.security(sym, "D", ta.sma(close / close[lookbackDays] - 1, signalMaWindow), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+    int slot = array.get(tickerSlots, i)
+    float symClose = pickFloat(slot, dClose1, dClose2, dClose3, dClose4)
+    float symOpen  = pickFloat(slot, dOpen1,  dOpen2,  dOpen3,  dOpen4)
+    float symLow   = pickFloat(slot, dLow1,   dLow2,   dLow3,   dLow4)
+    float rawMomentum = pickFloat(slot, dMom1, dMom2, dMom3, dMom4)
+    float signalValue = pickFloat(slot, dSig1, dSig2, dSig3, dSig4)
     float prevSignal = array.get(prevSignalSeries, i)
     array.set(prevSignalSeries, i, signalValue)
     float decisionSignal = useCloseRebalance ? signalValue : prevSignal
@@ -284,6 +354,8 @@ if forceExitOnFilter and filterActive and holdingRisky and not forceExitUseClose
     forceExitPendingDay := currDayStart
     forceExitPendingBasis := entryPrice
     forceExitPendingNote := "（次日开盘清仓）"
+    if showSwitchLabel
+        alert(str.format("强平预告: 风险过滤触发，预计次日开盘清仓 {0}", heldLabel), alert.freq_once_per_bar)
 
 // 次日开盘执行强平
 if forceExitPending and currDayStart > forceExitPendingDay
@@ -323,6 +395,9 @@ if forceExitPending and currDayStart > forceExitPendingDay
         if showForceExitLabel and not na(exitPrice)
             string exitTimeTxt = formatDate(time)
             label.new(bar_index, equityClosedSeries, str.format("强平 {0}\n时间: {1} 开盘\n价格: {2}", exitLabel, exitTimeTxt, fmtPrice(exitPrice)), color=color.new(color.red, 0), textcolor=color.white, style=label.style_label_down, size=size.small)
+        if showSwitchLabel and not na(exitPrice)
+            string exitTimeTxtAlert = formatDate(time)
+            alert(str.format("强平[开盘]: {0} @ {1}（{2}）", exitLabel, fmtPrice(exitPrice), exitTimeTxtAlert), alert.freq_once_per_bar)
         if enablePositionLog
             log.error(str.format("风险过滤清仓: {0} @ {1} {2}", exitLabel, fmtPrice(exitPrice), forceExitPendingNote))
         if enableEquityDebug
@@ -370,6 +445,9 @@ if forceExitOnFilter and filterActive and holdingRisky and forceExitUseClose and
         if showForceExitLabel and not na(exitPrice)
             string exitTimeTxt = formatDate(time)
             label.new(bar_index, equityClosedSeries, str.format("强平 {0}\n时间: {1} 收盘\n价格: {2}", exitLabel, exitTimeTxt, fmtPrice(exitPrice)), color=color.new(color.red, 0), textcolor=color.white, style=label.style_label_down, size=size.small)
+        if showSwitchLabel and not na(exitPrice)
+            string exitTimeTxtAlert = formatDate(time)
+            alert(str.format("强平[收盘]: {0} @ {1}（{2}）", exitLabel, fmtPrice(exitPrice), exitTimeTxtAlert), alert.freq_once_per_bar)
         if enablePositionLog
             log.error(str.format("风险过滤清仓: {0} @ {1}", exitLabel, fmtPrice(exitPrice)))
         if enableEquityDebug
@@ -404,6 +482,63 @@ bool decisionMade = false
 string decisionMsg = ""
 string timingTxt = useCloseRebalance ? "收盘" : "次日开盘"
 bool tradeExecuted = false
+
+// === Force-exit pre-alert (intraday, realtime) ===
+if enableIntradayPreAlert and timeframe.isintraday and barstate.isrealtime and inRange and useMarketFilter and forceExitOnFilter and hadPositionPrev and holdingRisky
+    if currDayStart != forcePreAlertDay
+        forcePreAlertDay := currDayStart
+        forcePreAlertLastMsg := ""
+    string forcePreMsg = ""
+    if forceExitPending and currDayStart == forceExitPendingDay
+        forcePreMsg := str.format("强平预警: 已触发风险过滤，预计次日开盘清仓 {0}（今日不再换仓）", heldLabel)
+    else
+        if marketWouldRiskOffPre and not marketRiskOff
+            string forceTimingTxt = forceExitUseClose ? "当日收盘" : "次日开盘"
+            forcePreMsg := str.format("强平盘中预警: 基准可能跌破SMA{0}（若收盘仍成立，将于{1}清仓 {2}）", marketFilterLen, forceTimingTxt, heldLabel)
+        else if filterActive
+            string forceTimingTxt2 = forceExitUseClose ? "当日收盘" : "次日开盘"
+            forcePreMsg := str.format("强平预警: 风险过滤已触发（将于{0}清仓 {1}）", forceTimingTxt2, heldLabel)
+    if str.length(forcePreMsg) > 0 and forcePreMsg != forcePreAlertLastMsg
+        forcePreAlertLastMsg := forcePreMsg
+        alert(forcePreMsg, alert.freq_once_per_bar)
+        label.new(bar_index, equityClosedSeries, forcePreMsg, color=color.new(color.red, 0), textcolor=color.white, style=label.style_label_up, size=size.small)
+
+// === Intraday pre-alert (only for close execution) ===
+if inRange and enableIntradayPreAlert and useCloseRebalance and timeframe.isintraday and barstate.isrealtime and not skipDecisionsDueToPending
+    if currDayStart != preAlertDay
+        preAlertDay := currDayStart
+        preAlertLastMsg := ""
+    int bestIdxPre = na
+    float bestSigPre = -10e10
+    for i = 0 to assetCount - 1
+        if not isSymbolEligible(i)
+            continue
+        int slotPre = array.get(tickerSlots, i)
+        float preSig = pickFloat(slotPre, preSig1, preSig2, preSig3, preSig4)
+        if na(preSig)
+            continue
+        if preSig > bestSigPre
+            bestSigPre := preSig
+            bestIdxPre := i
+
+    float currentSigPre = na
+    if hadPositionPrev
+        int holdSlot = array.get(tickerSlots, holdingIdx)
+        currentSigPre := pickFloat(holdSlot, preSig1, preSig2, preSig3, preSig4)
+    float currentSigPreVal = na(currentSigPre) ? -1e10 : currentSigPre
+
+    bool preCanEnter = not hadPositionPrev and not na(bestIdxPre) and bestSigPre >= entryThreshold
+    bool preCanSwitch = hadPositionPrev and not na(bestIdxPre) and bestIdxPre != holdingIdx and (bestSigPre - currentSigPreVal) >= switchDelta and bestSigPre > currentSigPreVal
+    string preMsg = ""
+    if preCanEnter
+        preMsg := str.format("盘中预警[收盘]: 可能开仓 {0}（信号={1,number,#.##}% >= 阈值{2,number,#.##}%；可能在收盘前失效）", array.get(labels, bestIdxPre), bestSigPre * 100, entryThreshold * 100)
+    else if preCanSwitch
+        preMsg := str.format("盘中预警[收盘]: 可能换仓 {0} -> {1}（Δ={2,number,#.##}% >= 阈值{3,number,#.##}%；可能在收盘前失效）", prevHeldLabel, array.get(labels, bestIdxPre), (bestSigPre - currentSigPreVal) * 100, switchDelta * 100)
+
+    if str.length(preMsg) > 0 and preMsg != preAlertLastMsg
+        preAlertLastMsg := preMsg
+        alert(preMsg, alert.freq_once_per_bar)
+        label.new(bar_index, equityClosedSeries, preMsg, color=color.new(color.orange, 0), textcolor=color.white, style=label.style_label_up, size=size.small)
 
 if inRange and barstate.isconfirmed and not skipDecisionsDueToPending
     float bestSig = bestIdx >= 0 ? bestSignal : na
