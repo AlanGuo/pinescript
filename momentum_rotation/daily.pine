@@ -484,7 +484,7 @@ string timingTxt = useCloseRebalance ? "收盘" : "次日开盘"
 bool tradeExecuted = false
 
 // === Force-exit pre-alert (intraday, realtime) ===
-if enableIntradayPreAlert and timeframe.isintraday and barstate.isrealtime and inRange and useMarketFilter and forceExitOnFilter and hadPositionPrev and holdingRisky
+if enableIntradayPreAlert and barstate.isrealtime and inRange and useMarketFilter and forceExitOnFilter and hadPositionPrev and holdingRisky
     if currDayStart != forcePreAlertDay
         forcePreAlertDay := currDayStart
         forcePreAlertLastMsg := ""
@@ -504,7 +504,7 @@ if enableIntradayPreAlert and timeframe.isintraday and barstate.isrealtime and i
         label.new(bar_index, equityClosedSeries, forcePreMsg, color=color.new(color.red, 0), textcolor=color.white, style=label.style_label_up, size=size.small)
 
 // === Intraday pre-alert (only for close execution) ===
-if inRange and enableIntradayPreAlert and useCloseRebalance and timeframe.isintraday and barstate.isrealtime and not skipDecisionsDueToPending
+if inRange and enableIntradayPreAlert and useCloseRebalance and barstate.isrealtime and not skipDecisionsDueToPending
     if currDayStart != preAlertDay
         preAlertDay := currDayStart
         preAlertLastMsg := ""
