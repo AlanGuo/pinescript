@@ -42,6 +42,7 @@ entryThreshold = input.float(0.03, "Entry 阈值(绝对)", step=0.01, group="Log
 switchDelta = input.float(0.02, "Switch Δ(相对)", step=0.01, group="Logic")
 executionMode = input.string("收盘", "换仓时点", options=["收盘", "次日开盘"], group="Logic", tooltip="在信号日收盘成交或下一交易日开盘成交")
 useCloseRebalance = executionMode == "收盘"
+alignDailySeries = input.bool(true, "日线对齐(跨品种)", group="Logic", tooltip="解决不同主图下 request.security(\"D\") 日线序列错位：在日线图上使用 lookahead_on 将各品种对齐到同一天（等价于以当日收盘数据决策）")
 initialEquity = input.float(1, "初始净值", minval=0, group="Logic")
 backtestStart = input.time(timestamp("2014-12-25T00:00:00"), "Backtest Start", confirm=true, group="Logic")
 backtestEnd = input.time(timestamp("2099-12-31T23:59:59"), "Backtest End", confirm=true, group="Logic")
@@ -62,6 +63,7 @@ enablePositionLog = input.bool(false, "启用仓位变动日志", group="Debug")
 enableMomentumLog = input.bool(false, "启用动量计算日志", group="Debug")
 enableFilterLog = input.bool(false, "启用基准过滤日志", group="Debug")
 enableDecisionLog = input.bool(false, "启用信号判定日志", group="Debug")
+enableAlignmentLog = input.bool(false, "启用时间对齐调试日志", group="Debug", tooltip="用于排查不同主图下 request.security 日线序列对齐到主图时间轴时产生的偏移；默认只打印日期不一致的情况")
 
 formatDate(int ts) =>
     if na(ts)
@@ -211,6 +213,9 @@ sortTableRowsBySignal() =>
 pickFloat(int slot, float v1, float v2, float v3, float v4) =>
     slot == 1 ? v1 : slot == 2 ? v2 : slot == 3 ? v3 : slot == 4 ? v4 : na
 
+pickInt(int slot, int v1, int v2, int v3, int v4) =>
+    slot == 1 ? v1 : slot == 2 ? v2 : slot == 3 ? v3 : slot == 4 ? v4 : na
+
 int maLenSafe = math.max(signalMaWindow, 1)
 
 calcMomentum() =>
@@ -223,36 +228,16 @@ calcSignal() =>
     sma = ta.sma(m, maLenSafe)
     signalMaWindow > 0 ? (signalMaType == "EMA" ? ema : signalMaType == "RMA" ? rma : sma) : m
 
-// === Precomputed daily series (lookahead_off) ===
-dClose1 = request.security(sym1Safe, "D", close, gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
-dOpen1  = request.security(sym1Safe, "D", open,  gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
-dLow1   = request.security(sym1Safe, "D", low,   gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
-dMom1   = request.security(sym1Safe, "D", calcMomentum(), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
-dSig1   = request.security(sym1Safe, "D", calcSignal(), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+// === Precomputed daily series (lookahead_off / lookahead_on) ===
+[dTime1Off, dClose1Off, dOpen1Off, dLow1Off, dMom1Off, dSig1Off] = request.security(sym1Safe, "D", [time, close, open, low, calcMomentum(), calcSignal()], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+[dTime2Off, dClose2Off, dOpen2Off, dLow2Off, dMom2Off, dSig2Off] = request.security(sym2Safe, "D", [time, close, open, low, calcMomentum(), calcSignal()], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+[dTime3Off, dClose3Off, dOpen3Off, dLow3Off, dMom3Off, dSig3Off] = request.security(sym3Safe, "D", [time, close, open, low, calcMomentum(), calcSignal()], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+[dTime4Off, dClose4Off, dOpen4Off, dLow4Off, dMom4Off, dSig4Off] = request.security(sym4Safe, "D", [time, close, open, low, calcMomentum(), calcSignal()], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
 
-dClose2 = request.security(sym2Safe, "D", close, gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
-dOpen2  = request.security(sym2Safe, "D", open,  gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
-dLow2   = request.security(sym2Safe, "D", low,   gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
-dMom2   = request.security(sym2Safe, "D", calcMomentum(), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
-dSig2   = request.security(sym2Safe, "D", calcSignal(), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
-
-dClose3 = request.security(sym3Safe, "D", close, gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
-dOpen3  = request.security(sym3Safe, "D", open,  gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
-dLow3   = request.security(sym3Safe, "D", low,   gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
-dMom3   = request.security(sym3Safe, "D", calcMomentum(), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
-dSig3   = request.security(sym3Safe, "D", calcSignal(), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
-
-dClose4 = request.security(sym4Safe, "D", close, gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
-dOpen4  = request.security(sym4Safe, "D", open,  gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
-dLow4   = request.security(sym4Safe, "D", low,   gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
-dMom4   = request.security(sym4Safe, "D", calcMomentum(), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
-dSig4   = request.security(sym4Safe, "D", calcSignal(), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
-
-// === Precomputed daily series for intraday pre-alert (lookahead_on) ===
-preSig1 = request.security(sym1Safe, "D", calcSignal(), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
-preSig2 = request.security(sym2Safe, "D", calcSignal(), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
-preSig3 = request.security(sym3Safe, "D", calcSignal(), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
-preSig4 = request.security(sym4Safe, "D", calcSignal(), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
+[dTime1On, dClose1On, dOpen1On, dLow1On, dMom1On, dSig1On] = request.security(sym1Safe, "D", [time, close, open, low, calcMomentum(), calcSignal()], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
+[dTime2On, dClose2On, dOpen2On, dLow2On, dMom2On, dSig2On] = request.security(sym2Safe, "D", [time, close, open, low, calcMomentum(), calcSignal()], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
+[dTime3On, dClose3On, dOpen3On, dLow3On, dMom3On, dSig3On] = request.security(sym3Safe, "D", [time, close, open, low, calcMomentum(), calcSignal()], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
+[dTime4On, dClose4On, dOpen4On, dLow4On, dMom4On, dSig4On] = request.security(sym4Safe, "D", [time, close, open, low, calcMomentum(), calcSignal()], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
 
 // === Market filter computation ===
 marketClose = request.security(marketFilterSymbol, "D", close, gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
@@ -320,14 +305,16 @@ var float forceExitPendingBasis = na
 var string forceExitPendingNote = ""
 
 // === Per-bar computations ===
+bool useAlignedDaily = timeframe.isdaily and alignDailySeries
 for i = 0 to assetCount - 1
     string sym = array.get(tickers, i)
     int slot = array.get(tickerSlots, i)
-    float symClose = pickFloat(slot, dClose1, dClose2, dClose3, dClose4)
-    float symOpen  = pickFloat(slot, dOpen1,  dOpen2,  dOpen3,  dOpen4)
-    float symLow   = pickFloat(slot, dLow1,   dLow2,   dLow3,   dLow4)
-    float rawMomentum = pickFloat(slot, dMom1, dMom2, dMom3, dMom4)
-    float signalValue = pickFloat(slot, dSig1, dSig2, dSig3, dSig4)
+    int symTime = pickInt(slot, useAlignedDaily ? dTime1On : dTime1Off, useAlignedDaily ? dTime2On : dTime2Off, useAlignedDaily ? dTime3On : dTime3Off, useAlignedDaily ? dTime4On : dTime4Off)
+    float symClose = pickFloat(slot, useAlignedDaily ? dClose1On : dClose1Off, useAlignedDaily ? dClose2On : dClose2Off, useAlignedDaily ? dClose3On : dClose3Off, useAlignedDaily ? dClose4On : dClose4Off)
+    float symOpen  = pickFloat(slot, useAlignedDaily ? dOpen1On : dOpen1Off,   useAlignedDaily ? dOpen2On : dOpen2Off,   useAlignedDaily ? dOpen3On : dOpen3Off,   useAlignedDaily ? dOpen4On : dOpen4Off)
+    float symLow   = pickFloat(slot, useAlignedDaily ? dLow1On : dLow1Off,     useAlignedDaily ? dLow2On : dLow2Off,     useAlignedDaily ? dLow3On : dLow3Off,     useAlignedDaily ? dLow4On : dLow4Off)
+    float rawMomentum = pickFloat(slot, useAlignedDaily ? dMom1On : dMom1Off, useAlignedDaily ? dMom2On : dMom2Off, useAlignedDaily ? dMom3On : dMom3Off, useAlignedDaily ? dMom4On : dMom4Off)
+    float signalValue = pickFloat(slot, useAlignedDaily ? dSig1On : dSig1Off, useAlignedDaily ? dSig2On : dSig2Off, useAlignedDaily ? dSig3On : dSig3Off, useAlignedDaily ? dSig4On : dSig4Off)
     float prevSignal = array.get(prevSignalSeries, i)
     array.set(prevSignalSeries, i, signalValue)
     float decisionSignal = useCloseRebalance ? signalValue : prevSignal
@@ -339,6 +326,12 @@ for i = 0 to assetCount - 1
     array.set(lowSeries, i, symLow)
     if enableMomentumLog and barstate.isconfirmed and inRange and not na(rawMomentum)
         log.info(str.format("{0} ({1}) {2}日动量: {3,number,#.##}% | Signal: {4,number,#.##}%", sym, array.get(labels, i), lookbackDays, rawMomentum * 100, signalValue * 100))
+    if enableAlignmentLog and barstate.isconfirmed and inRange and not na(symTime)
+        string chartDateTxt = formatDate(time)
+        string symDateTxt = formatDate(symTime)
+        if symDateTxt != chartDateTxt
+            float dayDiff = (time - symTime) / (24.0 * 60 * 60 * 1000.0)
+            log.warning(str.format("时间对齐异常: chart={0} | symDay={1} | Δdays={2,number,#.##} | {3} ({4})", chartDateTxt, symDateTxt, dayDiff, sym, array.get(labels, i)))
 
 int currDayStart = int(time("D"))
 bool forceExitExecuted = false
@@ -514,7 +507,7 @@ if inRange and enableIntradayPreAlert and useCloseRebalance and barstate.isrealt
         if not isSymbolEligible(i)
             continue
         int slotPre = array.get(tickerSlots, i)
-        float preSig = pickFloat(slotPre, preSig1, preSig2, preSig3, preSig4)
+        float preSig = pickFloat(slotPre, dSig1On, dSig2On, dSig3On, dSig4On)
         if na(preSig)
             continue
         if preSig > bestSigPre
@@ -524,7 +517,7 @@ if inRange and enableIntradayPreAlert and useCloseRebalance and barstate.isrealt
     float currentSigPre = na
     if hadPositionPrev
         int holdSlot = array.get(tickerSlots, holdingIdx)
-        currentSigPre := pickFloat(holdSlot, preSig1, preSig2, preSig3, preSig4)
+        currentSigPre := pickFloat(holdSlot, dSig1On, dSig2On, dSig3On, dSig4On)
     float currentSigPreVal = na(currentSigPre) ? -1e10 : currentSigPre
 
     bool preCanEnter = not hadPositionPrev and not na(bestIdxPre) and bestSigPre >= entryThreshold
@@ -637,6 +630,17 @@ if inRange and barstate.isconfirmed and not skipDecisionsDueToPending
                 decisionMsg := str.format("平仓[{0}]: {1} @ {2}", timingTxt, prevHeldLabel, fmtPrice(exitPrice))
             if enablePositionLog
                 log.error(decisionMsg)
+            if enableAlignmentLog
+                string chartDateTxt = formatDate(time)
+                int bestSlot = not na(bestIdx) ? array.get(tickerSlots, bestIdx) : na
+                int bestDayTime = not na(bestSlot) ? pickInt(bestSlot, useAlignedDaily ? dTime1On : dTime1Off, useAlignedDaily ? dTime2On : dTime2Off, useAlignedDaily ? dTime3On : dTime3Off, useAlignedDaily ? dTime4On : dTime4Off) : na
+                string bestDateTxt = formatDate(bestDayTime)
+                int prevDayTime = na
+                if hadPositionPrev and not na(prevHoldingIdx)
+                    int prevSlot = array.get(tickerSlots, prevHoldingIdx)
+                    prevDayTime := pickInt(prevSlot, useAlignedDaily ? dTime1On : dTime1Off, useAlignedDaily ? dTime2On : dTime2Off, useAlignedDaily ? dTime3On : dTime3Off, useAlignedDaily ? dTime4On : dTime4Off)
+                string prevDateTxt = formatDate(prevDayTime)
+                log.warning(str.format("成交对齐: chart={0} | bestDay={1} | prevDay={2} | {3}", chartDateTxt, bestDateTxt, prevDateTxt, decisionMsg))
             if showSwitchLabel and str.length(decisionMsg) > 0
                 if not na(lastSwitch)
                     label.delete(lastSwitch)
