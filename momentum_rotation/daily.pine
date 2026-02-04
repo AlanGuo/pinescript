@@ -62,7 +62,7 @@ lookbackDays = input.int(20, "动量回顾(交易日)", minval=1, group="Logic")
 signalMaWindowInput = input.int(3, "Signal MA窗口 (0=关闭)", minval=0, group="Logic")
 signalMaWindow = signalMaWindowInput <= 1 ? 0 : signalMaWindowInput
 signalMaType = input.string("SMA", "Signal MA类型", options=["SMA", "EMA", "RMA"], group="Logic")
-signalVolAdjust = input.string("subtract", "波动率调整方式", options=["none", "subtract", "divide"], group="Logic", tooltip="none: 不做波动率调整；subtract: 信号减去波动率项；divide: 信号除以(1+权重*波动率)")
+signalVolAdjust = input.string("SUB", "波动率调整方式", options=["NONE", "SUB", "DIV"], group="Logic", tooltip="none: 不做波动率调整；subtract: 信号减去波动率项；divide: 信号除以(1+权重*波动率)")
 volCalcMethod = input.string("EWMA", "波动率计算方式", options=["EWMA", "STDEV"], group="Logic", tooltip="EWMA: 对收益率平方做EMA后开方；STDEV: 收益率标准差")
 volWindow = lookbackDays
 volAdjustWeight = input.float(1.0, "波动率调整权重", step=0.1, group="Logic", tooltip="信号 = 原始信号 - 权重 * 波动率(收益率)")
@@ -337,10 +337,10 @@ calcSignal() =>
     signalBase = calcSignalBase()
     signalAdjusted = signalBase
     float vol = na
-    if signalVolAdjust == "subtract"
+    if signalVolAdjust == "SUB"
         vol := calcVol()
         signalAdjusted -= volAdjustWeight * vol
-    else if signalVolAdjust == "divide"
+    else if signalVolAdjust == "DIV"
         vol := na(vol) ? calcVol() : vol
         float denom = 1 + volAdjustWeight * vol
         signalAdjusted := denom != 0 ? signalAdjusted / denom : na
