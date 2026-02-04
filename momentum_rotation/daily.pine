@@ -8,9 +8,21 @@ symbol2 = input.symbol("SSE:513100", "Symbol 2", group="Universe")
 name2   = input.string("纳指ETF", "Label 2", group="Universe")
 symbol3 = input.symbol("SZSE:159915", "Symbol 3", group="Universe")
 name3   = input.string("创业板ETF", "Label 3", group="Universe")
-symbol4 = input.symbol("SSE:511260", "Symbol 4", group="Universe")
-name4   = input.string("十年国债ETF", "Label 4", group="Universe")
-rotationCount = input.int(3, "参与轮动资产数量", minval=1, maxval=4, group="Universe", tooltip="从上面填写的资产中取前N个参与轮动")
+symbol4 = input.symbol("SSE:588000", "Symbol 4", group="Universe")
+name4   = input.string("科创50", "Label 4", group="Universe")
+symbol5 = input.symbol("SSE:510180", "Symbol 5", group="Universe")
+name5   = input.string("上证180", "Label 5", group="Universe")
+symbol6 = input.symbol("", "Symbol 6", group="Universe")
+name6   = input.string("Label 6", "Label 6", group="Universe")
+symbol7 = input.symbol("", "Symbol 7", group="Universe")
+name7   = input.string("Label 7", "Label 7", group="Universe")
+symbol8 = input.symbol("", "Symbol 8", group="Universe")
+name8   = input.string("Label 8", "Label 8", group="Universe")
+symbol9 = input.symbol("", "Symbol 9", group="Universe")
+name9   = input.string("Label 9", "Label 9", group="Universe")
+symbol10 = input.symbol("", "Symbol 10", group="Universe")
+name10   = input.string("Label 10", "Label 10", group="Universe")
+rotationCount = input.int(3, "参与轮动资产数量", minval=1, maxval=10, group="Universe", tooltip="从上面填写的资产中取前N个参与轮动")
 pricePrecision  = input.int(3, "价格精确小数位", minval=0, maxval=6, group="Universe")
 var bool[] riskOffExclude = array.new_bool()
 var bool marketRiskOff = false
@@ -26,18 +38,33 @@ exclude1OnDown = input.bool(false, "基准跌破均线时停用Symbol1", group="
 exclude2OnDown = input.bool(true,  "基准跌破均线时停用Symbol2", group="Market Filter")
 exclude3OnDown = input.bool(true,  "基准跌破均线时停用Symbol3", group="Market Filter")
 exclude4OnDown = input.bool(true,  "基准跌破均线时停用Symbol4", group="Market Filter")
+exclude5OnDown = input.bool(true,  "基准跌破均线时停用Symbol5", group="Market Filter")
+exclude6OnDown = input.bool(true,  "基准跌破均线时停用Symbol6", group="Market Filter")
+exclude7OnDown = input.bool(true,  "基准跌破均线时停用Symbol7", group="Market Filter")
+exclude8OnDown = input.bool(true,  "基准跌破均线时停用Symbol8", group="Market Filter")
+exclude9OnDown = input.bool(true,  "基准跌破均线时停用Symbol9", group="Market Filter")
+exclude10OnDown = input.bool(true,  "基准跌破均线时停用Symbol10", group="Market Filter")
 
 fallbackSymbol = marketFilterSymbol
 sym1Safe = str.length(symbol1) > 0 ? symbol1 : fallbackSymbol
 sym2Safe = str.length(symbol2) > 0 ? symbol2 : fallbackSymbol
 sym3Safe = str.length(symbol3) > 0 ? symbol3 : fallbackSymbol
 sym4Safe = str.length(symbol4) > 0 ? symbol4 : fallbackSymbol
+sym5Safe = str.length(symbol5) > 0 ? symbol5 : fallbackSymbol
+sym6Safe = str.length(symbol6) > 0 ? symbol6 : fallbackSymbol
+sym7Safe = str.length(symbol7) > 0 ? symbol7 : fallbackSymbol
+sym8Safe = str.length(symbol8) > 0 ? symbol8 : fallbackSymbol
+sym9Safe = str.length(symbol9) > 0 ? symbol9 : fallbackSymbol
+sym10Safe = str.length(symbol10) > 0 ? symbol10 : fallbackSymbol
 
 // === Core logic inputs ===
 lookbackDays = input.int(20, "动量回顾(交易日)", minval=1, group="Logic")
 signalMaWindowInput = input.int(3, "Signal MA窗口 (0=关闭)", minval=0, group="Logic")
 signalMaWindow = signalMaWindowInput <= 1 ? 0 : signalMaWindowInput
 signalMaType = input.string("SMA", "Signal MA类型", options=["SMA", "EMA", "RMA"], group="Logic")
+signalVolAdjust = input.string("subtract", "波动率调整方式", options=["none", "subtract", "divide"], group="Logic", tooltip="none: 不做波动率调整；subtract: 信号减去波动率项；divide: 信号除以(1+权重*波动率)")
+volWindow = lookbackDays
+volAdjustWeight = input.float(1.0, "波动率调整权重", step=0.1, group="Logic", tooltip="信号 = 原始信号 - 权重 * 波动率(收益率标准差)")
 entryThreshold = input.float(0.03, "Entry 阈值(绝对)", step=0.01, group="Logic")
 switchDelta = input.float(0.02, "Switch Δ(相对)", step=0.01, group="Logic")
 executionMode = input.string("收盘", "换仓时点", options=["收盘", "次日开盘"], group="Logic", tooltip="在信号日收盘成交或下一交易日开盘成交")
@@ -109,6 +136,36 @@ if barstate.isfirst
         array.push(labels,  name4)
         array.push(riskOffExclude, exclude4OnDown)
         array.push(tickerSlots, 4)
+    if str.length(symbol5) > 0
+        array.push(tickers, symbol5)
+        array.push(labels,  name5)
+        array.push(riskOffExclude, exclude5OnDown)
+        array.push(tickerSlots, 5)
+    if str.length(symbol6) > 0
+        array.push(tickers, symbol6)
+        array.push(labels,  name6)
+        array.push(riskOffExclude, exclude6OnDown)
+        array.push(tickerSlots, 6)
+    if str.length(symbol7) > 0
+        array.push(tickers, symbol7)
+        array.push(labels,  name7)
+        array.push(riskOffExclude, exclude7OnDown)
+        array.push(tickerSlots, 7)
+    if str.length(symbol8) > 0
+        array.push(tickers, symbol8)
+        array.push(labels,  name8)
+        array.push(riskOffExclude, exclude8OnDown)
+        array.push(tickerSlots, 8)
+    if str.length(symbol9) > 0
+        array.push(tickers, symbol9)
+        array.push(labels,  name9)
+        array.push(riskOffExclude, exclude9OnDown)
+        array.push(tickerSlots, 9)
+    if str.length(symbol10) > 0
+        array.push(tickers, symbol10)
+        array.push(labels,  name10)
+        array.push(riskOffExclude, exclude10OnDown)
+        array.push(tickerSlots, 10)
     idx = array.size(tickers) - 1
     while idx >= 0
         sym = array.get(tickers, idx)
@@ -131,7 +188,9 @@ if assetCount == 0
 // === Per-asset storage ===
 var float[] momentumLookback = array.new_float()
 var float[] signalSeries = array.new_float()
+var float[] signalBaseSeries = array.new_float()
 var float[] signalDecisionSeries = array.new_float()
+var float[] volSeries = array.new_float()
 var float[] prevSignalSeries = array.new_float()
 var float[] closeSeries = array.new_float()
 var float[] openSeries = array.new_float()
@@ -146,7 +205,9 @@ var int[] symTradeCount = array.new_int()
 if barstate.isfirst
     array.clear(momentumLookback)
     array.clear(signalSeries)
+    array.clear(signalBaseSeries)
     array.clear(signalDecisionSeries)
+    array.clear(volSeries)
     array.clear(prevSignalSeries)
     array.clear(closeSeries)
     array.clear(openSeries)
@@ -160,7 +221,9 @@ if barstate.isfirst
     for i = 0 to assetCount - 1
         array.push(momentumLookback, na)
         array.push(signalSeries, na)
+        array.push(signalBaseSeries, na)
         array.push(signalDecisionSeries, na)
+        array.push(volSeries, na)
         array.push(prevSignalSeries, na)
         array.push(closeSeries, na)
         array.push(openSeries, na)
@@ -176,8 +239,23 @@ color0  = color.new(color.orange, 50)
 color1  = color.new(color.blue, 50)
 color2  = color.new(color.red, 50)
 color3  = color.new(color.purple, 50)
+color4  = color.new(color.green, 50)
+color5  = color.new(color.teal, 50)
+color6  = color.new(color.yellow, 50)
+color7  = color.new(color.fuchsia, 50)
+color8  = color.new(color.aqua, 50)
+color9  = color.new(color.gray, 50)
 getColor(int idx) =>
-    idx == 0 ? color0 : idx == 1 ? color1 : idx == 2 ? color2 : idx == 3 ? color3 : na
+    idx == 0 ? color0 :
+      idx == 1 ? color1 :
+      idx == 2 ? color2 :
+      idx == 3 ? color3 :
+      idx == 4 ? color4 :
+      idx == 5 ? color5 :
+      idx == 6 ? color6 :
+      idx == 7 ? color7 :
+      idx == 8 ? color8 :
+      idx == 9 ? color9 : na
 
 isSymbolEligible(int idx) =>
     if not useMarketFilter
@@ -210,34 +288,81 @@ sortTableRowsBySignal() =>
                 array.set(displayOrder, i, array.get(displayOrder, bestPos))
                 array.set(displayOrder, bestPos, tmp)
 
-pickFloat(int slot, float v1, float v2, float v3, float v4) =>
-    slot == 1 ? v1 : slot == 2 ? v2 : slot == 3 ? v3 : slot == 4 ? v4 : na
+pickFloat(int slot, float v1, float v2, float v3, float v4, float v5, float v6, float v7, float v8, float v9, float v10) =>
+    slot == 1 ? v1 :
+      slot == 2 ? v2 :
+      slot == 3 ? v3 :
+      slot == 4 ? v4 :
+      slot == 5 ? v5 :
+      slot == 6 ? v6 :
+      slot == 7 ? v7 :
+      slot == 8 ? v8 :
+      slot == 9 ? v9 :
+      slot == 10 ? v10 : na
 
-pickInt(int slot, int v1, int v2, int v3, int v4) =>
-    slot == 1 ? v1 : slot == 2 ? v2 : slot == 3 ? v3 : slot == 4 ? v4 : na
+pickInt(int slot, int v1, int v2, int v3, int v4, int v5, int v6, int v7, int v8, int v9, int v10) =>
+    slot == 1 ? v1 :
+      slot == 2 ? v2 :
+      slot == 3 ? v3 :
+      slot == 4 ? v4 :
+      slot == 5 ? v5 :
+      slot == 6 ? v6 :
+      slot == 7 ? v7 :
+      slot == 8 ? v8 :
+      slot == 9 ? v9 :
+      slot == 10 ? v10 : na
 
 int maLenSafe = math.max(signalMaWindow, 1)
+
+calcVol() =>
+    ret = close / close[1] - 1
+    ta.stdev(ret, volWindow)
 
 calcMomentum() =>
     close / close[lookbackDays] - 1
 
-calcSignal() =>
+calcSignalBase() =>
     m = close / close[lookbackDays] - 1
     ema = ta.ema(m, maLenSafe)
     rma = ta.rma(m, maLenSafe)
     sma = ta.sma(m, maLenSafe)
     signalMaWindow > 0 ? (signalMaType == "EMA" ? ema : signalMaType == "RMA" ? rma : sma) : m
 
-// === Precomputed daily series (lookahead_off / lookahead_on) ===
-[dTime1Off, dClose1Off, dOpen1Off, dLow1Off, dMom1Off, dSig1Off] = request.security(sym1Safe, "D", [time, close, open, low, calcMomentum(), calcSignal()], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
-[dTime2Off, dClose2Off, dOpen2Off, dLow2Off, dMom2Off, dSig2Off] = request.security(sym2Safe, "D", [time, close, open, low, calcMomentum(), calcSignal()], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
-[dTime3Off, dClose3Off, dOpen3Off, dLow3Off, dMom3Off, dSig3Off] = request.security(sym3Safe, "D", [time, close, open, low, calcMomentum(), calcSignal()], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
-[dTime4Off, dClose4Off, dOpen4Off, dLow4Off, dMom4Off, dSig4Off] = request.security(sym4Safe, "D", [time, close, open, low, calcMomentum(), calcSignal()], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+calcSignal() =>
+    signalBase = calcSignalBase()
+    signalAdjusted = signalBase
+    float vol = na
+    if signalVolAdjust == "subtract"
+        vol := calcVol()
+        signalAdjusted -= volAdjustWeight * vol
+    else if signalVolAdjust == "divide"
+        vol := na(vol) ? calcVol() : vol
+        float denom = 1 + volAdjustWeight * vol
+        signalAdjusted := denom != 0 ? signalAdjusted / denom : na
+    signalAdjusted
 
-[dTime1On, dClose1On, dOpen1On, dLow1On, dMom1On, dSig1On] = request.security(sym1Safe, "D", [time, close, open, low, calcMomentum(), calcSignal()], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
-[dTime2On, dClose2On, dOpen2On, dLow2On, dMom2On, dSig2On] = request.security(sym2Safe, "D", [time, close, open, low, calcMomentum(), calcSignal()], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
-[dTime3On, dClose3On, dOpen3On, dLow3On, dMom3On, dSig3On] = request.security(sym3Safe, "D", [time, close, open, low, calcMomentum(), calcSignal()], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
-[dTime4On, dClose4On, dOpen4On, dLow4On, dMom4On, dSig4On] = request.security(sym4Safe, "D", [time, close, open, low, calcMomentum(), calcSignal()], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
+// === Precomputed daily series (lookahead_off / lookahead_on) ===
+[dTime1Off, dClose1Off, dOpen1Off, dLow1Off, dMom1Off, dVol1Off, dSigBase1Off, dSig1Off] = request.security(sym1Safe, "D", [time, close, open, low, calcMomentum(), calcVol(), calcSignalBase(), calcSignal()], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+[dTime2Off, dClose2Off, dOpen2Off, dLow2Off, dMom2Off, dVol2Off, dSigBase2Off, dSig2Off] = request.security(sym2Safe, "D", [time, close, open, low, calcMomentum(), calcVol(), calcSignalBase(), calcSignal()], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+[dTime3Off, dClose3Off, dOpen3Off, dLow3Off, dMom3Off, dVol3Off, dSigBase3Off, dSig3Off] = request.security(sym3Safe, "D", [time, close, open, low, calcMomentum(), calcVol(), calcSignalBase(), calcSignal()], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+[dTime4Off, dClose4Off, dOpen4Off, dLow4Off, dMom4Off, dVol4Off, dSigBase4Off, dSig4Off] = request.security(sym4Safe, "D", [time, close, open, low, calcMomentum(), calcVol(), calcSignalBase(), calcSignal()], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+[dTime5Off, dClose5Off, dOpen5Off, dLow5Off, dMom5Off, dVol5Off, dSigBase5Off, dSig5Off] = request.security(sym5Safe, "D", [time, close, open, low, calcMomentum(), calcVol(), calcSignalBase(), calcSignal()], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+[dTime6Off, dClose6Off, dOpen6Off, dLow6Off, dMom6Off, dVol6Off, dSigBase6Off, dSig6Off] = request.security(sym6Safe, "D", [time, close, open, low, calcMomentum(), calcVol(), calcSignalBase(), calcSignal()], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+[dTime7Off, dClose7Off, dOpen7Off, dLow7Off, dMom7Off, dVol7Off, dSigBase7Off, dSig7Off] = request.security(sym7Safe, "D", [time, close, open, low, calcMomentum(), calcVol(), calcSignalBase(), calcSignal()], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+[dTime8Off, dClose8Off, dOpen8Off, dLow8Off, dMom8Off, dVol8Off, dSigBase8Off, dSig8Off] = request.security(sym8Safe, "D", [time, close, open, low, calcMomentum(), calcVol(), calcSignalBase(), calcSignal()], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+[dTime9Off, dClose9Off, dOpen9Off, dLow9Off, dMom9Off, dVol9Off, dSigBase9Off, dSig9Off] = request.security(sym9Safe, "D", [time, close, open, low, calcMomentum(), calcVol(), calcSignalBase(), calcSignal()], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+[dTime10Off, dClose10Off, dOpen10Off, dLow10Off, dMom10Off, dVol10Off, dSigBase10Off, dSig10Off] = request.security(sym10Safe, "D", [time, close, open, low, calcMomentum(), calcVol(), calcSignalBase(), calcSignal()], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+
+[dTime1On, dClose1On, dOpen1On, dLow1On, dMom1On, dVol1On, dSigBase1On, dSig1On] = request.security(sym1Safe, "D", [time, close, open, low, calcMomentum(), calcVol(), calcSignalBase(), calcSignal()], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
+[dTime2On, dClose2On, dOpen2On, dLow2On, dMom2On, dVol2On, dSigBase2On, dSig2On] = request.security(sym2Safe, "D", [time, close, open, low, calcMomentum(), calcVol(), calcSignalBase(), calcSignal()], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
+[dTime3On, dClose3On, dOpen3On, dLow3On, dMom3On, dVol3On, dSigBase3On, dSig3On] = request.security(sym3Safe, "D", [time, close, open, low, calcMomentum(), calcVol(), calcSignalBase(), calcSignal()], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
+[dTime4On, dClose4On, dOpen4On, dLow4On, dMom4On, dVol4On, dSigBase4On, dSig4On] = request.security(sym4Safe, "D", [time, close, open, low, calcMomentum(), calcVol(), calcSignalBase(), calcSignal()], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
+[dTime5On, dClose5On, dOpen5On, dLow5On, dMom5On, dVol5On, dSigBase5On, dSig5On] = request.security(sym5Safe, "D", [time, close, open, low, calcMomentum(), calcVol(), calcSignalBase(), calcSignal()], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
+[dTime6On, dClose6On, dOpen6On, dLow6On, dMom6On, dVol6On, dSigBase6On, dSig6On] = request.security(sym6Safe, "D", [time, close, open, low, calcMomentum(), calcVol(), calcSignalBase(), calcSignal()], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
+[dTime7On, dClose7On, dOpen7On, dLow7On, dMom7On, dVol7On, dSigBase7On, dSig7On] = request.security(sym7Safe, "D", [time, close, open, low, calcMomentum(), calcVol(), calcSignalBase(), calcSignal()], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
+[dTime8On, dClose8On, dOpen8On, dLow8On, dMom8On, dVol8On, dSigBase8On, dSig8On] = request.security(sym8Safe, "D", [time, close, open, low, calcMomentum(), calcVol(), calcSignalBase(), calcSignal()], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
+[dTime9On, dClose9On, dOpen9On, dLow9On, dMom9On, dVol9On, dSigBase9On, dSig9On] = request.security(sym9Safe, "D", [time, close, open, low, calcMomentum(), calcVol(), calcSignalBase(), calcSignal()], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
+[dTime10On, dClose10On, dOpen10On, dLow10On, dMom10On, dVol10On, dSigBase10On, dSig10On] = request.security(sym10Safe, "D", [time, close, open, low, calcMomentum(), calcVol(), calcSignalBase(), calcSignal()], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
 
 // === Market filter computation ===
 marketClose = request.security(marketFilterSymbol, "D", close, gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
@@ -268,7 +393,7 @@ if useMarketFilter and inRange and barstate.isconfirmed and (marketCrossUp or ma
 var table infoTable = na
 var table ddTable = na
 if barstate.isfirst
-    infoTable := table.new(position.top_right, 9, assetCount + 1, border_width=1)
+    infoTable := table.new(position.top_right, 10, assetCount + 1, border_width=1)
     ddTable := table.new(position.bottom_right, 2, 6, border_width=1)
 
 // === Strategy state ===
@@ -309,16 +434,100 @@ bool useAlignedDaily = timeframe.isdaily and alignDailySeries
 for i = 0 to assetCount - 1
     string sym = array.get(tickers, i)
     int slot = array.get(tickerSlots, i)
-    int symTime = pickInt(slot, useAlignedDaily ? dTime1On : dTime1Off, useAlignedDaily ? dTime2On : dTime2Off, useAlignedDaily ? dTime3On : dTime3Off, useAlignedDaily ? dTime4On : dTime4Off)
-    float symClose = pickFloat(slot, useAlignedDaily ? dClose1On : dClose1Off, useAlignedDaily ? dClose2On : dClose2Off, useAlignedDaily ? dClose3On : dClose3Off, useAlignedDaily ? dClose4On : dClose4Off)
-    float symOpen  = pickFloat(slot, useAlignedDaily ? dOpen1On : dOpen1Off,   useAlignedDaily ? dOpen2On : dOpen2Off,   useAlignedDaily ? dOpen3On : dOpen3Off,   useAlignedDaily ? dOpen4On : dOpen4Off)
-    float symLow   = pickFloat(slot, useAlignedDaily ? dLow1On : dLow1Off,     useAlignedDaily ? dLow2On : dLow2Off,     useAlignedDaily ? dLow3On : dLow3Off,     useAlignedDaily ? dLow4On : dLow4Off)
-    float rawMomentum = pickFloat(slot, useAlignedDaily ? dMom1On : dMom1Off, useAlignedDaily ? dMom2On : dMom2Off, useAlignedDaily ? dMom3On : dMom3Off, useAlignedDaily ? dMom4On : dMom4Off)
-    float signalValue = pickFloat(slot, useAlignedDaily ? dSig1On : dSig1Off, useAlignedDaily ? dSig2On : dSig2Off, useAlignedDaily ? dSig3On : dSig3Off, useAlignedDaily ? dSig4On : dSig4Off)
+    int symTime = pickInt(slot,
+      useAlignedDaily ? dTime1On : dTime1Off,
+      useAlignedDaily ? dTime2On : dTime2Off,
+      useAlignedDaily ? dTime3On : dTime3Off,
+      useAlignedDaily ? dTime4On : dTime4Off,
+      useAlignedDaily ? dTime5On : dTime5Off,
+      useAlignedDaily ? dTime6On : dTime6Off,
+      useAlignedDaily ? dTime7On : dTime7Off,
+      useAlignedDaily ? dTime8On : dTime8Off,
+      useAlignedDaily ? dTime9On : dTime9Off,
+      useAlignedDaily ? dTime10On : dTime10Off)
+    float symClose = pickFloat(slot,
+      useAlignedDaily ? dClose1On : dClose1Off,
+      useAlignedDaily ? dClose2On : dClose2Off,
+      useAlignedDaily ? dClose3On : dClose3Off,
+      useAlignedDaily ? dClose4On : dClose4Off,
+      useAlignedDaily ? dClose5On : dClose5Off,
+      useAlignedDaily ? dClose6On : dClose6Off,
+      useAlignedDaily ? dClose7On : dClose7Off,
+      useAlignedDaily ? dClose8On : dClose8Off,
+      useAlignedDaily ? dClose9On : dClose9Off,
+      useAlignedDaily ? dClose10On : dClose10Off)
+    float symOpen  = pickFloat(slot,
+      useAlignedDaily ? dOpen1On : dOpen1Off,
+      useAlignedDaily ? dOpen2On : dOpen2Off,
+      useAlignedDaily ? dOpen3On : dOpen3Off,
+      useAlignedDaily ? dOpen4On : dOpen4Off,
+      useAlignedDaily ? dOpen5On : dOpen5Off,
+      useAlignedDaily ? dOpen6On : dOpen6Off,
+      useAlignedDaily ? dOpen7On : dOpen7Off,
+      useAlignedDaily ? dOpen8On : dOpen8Off,
+      useAlignedDaily ? dOpen9On : dOpen9Off,
+      useAlignedDaily ? dOpen10On : dOpen10Off)
+    float symLow   = pickFloat(slot,
+      useAlignedDaily ? dLow1On : dLow1Off,
+      useAlignedDaily ? dLow2On : dLow2Off,
+      useAlignedDaily ? dLow3On : dLow3Off,
+      useAlignedDaily ? dLow4On : dLow4Off,
+      useAlignedDaily ? dLow5On : dLow5Off,
+      useAlignedDaily ? dLow6On : dLow6Off,
+      useAlignedDaily ? dLow7On : dLow7Off,
+      useAlignedDaily ? dLow8On : dLow8Off,
+      useAlignedDaily ? dLow9On : dLow9Off,
+      useAlignedDaily ? dLow10On : dLow10Off)
+    float rawMomentum = pickFloat(slot,
+      useAlignedDaily ? dMom1On : dMom1Off,
+      useAlignedDaily ? dMom2On : dMom2Off,
+      useAlignedDaily ? dMom3On : dMom3Off,
+      useAlignedDaily ? dMom4On : dMom4Off,
+      useAlignedDaily ? dMom5On : dMom5Off,
+      useAlignedDaily ? dMom6On : dMom6Off,
+      useAlignedDaily ? dMom7On : dMom7Off,
+      useAlignedDaily ? dMom8On : dMom8Off,
+      useAlignedDaily ? dMom9On : dMom9Off,
+      useAlignedDaily ? dMom10On : dMom10Off)
+    float volValue = pickFloat(slot,
+      useAlignedDaily ? dVol1On : dVol1Off,
+      useAlignedDaily ? dVol2On : dVol2Off,
+      useAlignedDaily ? dVol3On : dVol3Off,
+      useAlignedDaily ? dVol4On : dVol4Off,
+      useAlignedDaily ? dVol5On : dVol5Off,
+      useAlignedDaily ? dVol6On : dVol6Off,
+      useAlignedDaily ? dVol7On : dVol7Off,
+      useAlignedDaily ? dVol8On : dVol8Off,
+      useAlignedDaily ? dVol9On : dVol9Off,
+      useAlignedDaily ? dVol10On : dVol10Off)
+    float signalBaseValue = pickFloat(slot,
+      useAlignedDaily ? dSigBase1On : dSigBase1Off,
+      useAlignedDaily ? dSigBase2On : dSigBase2Off,
+      useAlignedDaily ? dSigBase3On : dSigBase3Off,
+      useAlignedDaily ? dSigBase4On : dSigBase4Off,
+      useAlignedDaily ? dSigBase5On : dSigBase5Off,
+      useAlignedDaily ? dSigBase6On : dSigBase6Off,
+      useAlignedDaily ? dSigBase7On : dSigBase7Off,
+      useAlignedDaily ? dSigBase8On : dSigBase8Off,
+      useAlignedDaily ? dSigBase9On : dSigBase9Off,
+      useAlignedDaily ? dSigBase10On : dSigBase10Off)
+    float signalValue = pickFloat(slot,
+      useAlignedDaily ? dSig1On : dSig1Off,
+      useAlignedDaily ? dSig2On : dSig2Off,
+      useAlignedDaily ? dSig3On : dSig3Off,
+      useAlignedDaily ? dSig4On : dSig4Off,
+      useAlignedDaily ? dSig5On : dSig5Off,
+      useAlignedDaily ? dSig6On : dSig6Off,
+      useAlignedDaily ? dSig7On : dSig7Off,
+      useAlignedDaily ? dSig8On : dSig8Off,
+      useAlignedDaily ? dSig9On : dSig9Off,
+      useAlignedDaily ? dSig10On : dSig10Off)
     float prevSignal = array.get(prevSignalSeries, i)
     array.set(prevSignalSeries, i, signalValue)
     float decisionSignal = useCloseRebalance ? signalValue : prevSignal
     array.set(momentumLookback, i, rawMomentum)
+    array.set(volSeries, i, volValue)
+    array.set(signalBaseSeries, i, signalBaseValue)
     array.set(signalSeries, i, signalValue)
     array.set(signalDecisionSeries, i, decisionSignal)
     array.set(closeSeries, i, symClose)
@@ -507,7 +716,8 @@ if inRange and enableIntradayPreAlert and useCloseRebalance and barstate.isrealt
         if not isSymbolEligible(i)
             continue
         int slotPre = array.get(tickerSlots, i)
-        float preSig = pickFloat(slotPre, dSig1On, dSig2On, dSig3On, dSig4On)
+        float preSig = pickFloat(slotPre,
+          dSig1On, dSig2On, dSig3On, dSig4On, dSig5On, dSig6On, dSig7On, dSig8On, dSig9On, dSig10On)
         if na(preSig)
             continue
         if preSig > bestSigPre
@@ -517,7 +727,8 @@ if inRange and enableIntradayPreAlert and useCloseRebalance and barstate.isrealt
     float currentSigPre = na
     if hadPositionPrev
         int holdSlot = array.get(tickerSlots, holdingIdx)
-        currentSigPre := pickFloat(holdSlot, dSig1On, dSig2On, dSig3On, dSig4On)
+        currentSigPre := pickFloat(holdSlot,
+          dSig1On, dSig2On, dSig3On, dSig4On, dSig5On, dSig6On, dSig7On, dSig8On, dSig9On, dSig10On)
     float currentSigPreVal = na(currentSigPre) ? -1e10 : currentSigPre
 
     bool preCanEnter = not hadPositionPrev and not na(bestIdxPre) and bestSigPre >= entryThreshold
@@ -633,12 +844,32 @@ if inRange and barstate.isconfirmed and not skipDecisionsDueToPending
             if enableAlignmentLog
                 string chartDateTxt = formatDate(time)
                 int bestSlot = not na(bestIdx) ? array.get(tickerSlots, bestIdx) : na
-                int bestDayTime = not na(bestSlot) ? pickInt(bestSlot, useAlignedDaily ? dTime1On : dTime1Off, useAlignedDaily ? dTime2On : dTime2Off, useAlignedDaily ? dTime3On : dTime3Off, useAlignedDaily ? dTime4On : dTime4Off) : na
+                int bestDayTime = not na(bestSlot) ? pickInt(bestSlot,
+                  useAlignedDaily ? dTime1On : dTime1Off,
+                  useAlignedDaily ? dTime2On : dTime2Off,
+                  useAlignedDaily ? dTime3On : dTime3Off,
+                  useAlignedDaily ? dTime4On : dTime4Off,
+                  useAlignedDaily ? dTime5On : dTime5Off,
+                  useAlignedDaily ? dTime6On : dTime6Off,
+                  useAlignedDaily ? dTime7On : dTime7Off,
+                  useAlignedDaily ? dTime8On : dTime8Off,
+                  useAlignedDaily ? dTime9On : dTime9Off,
+                  useAlignedDaily ? dTime10On : dTime10Off) : na
                 string bestDateTxt = formatDate(bestDayTime)
                 int prevDayTime = na
                 if hadPositionPrev and not na(prevHoldingIdx)
                     int prevSlot = array.get(tickerSlots, prevHoldingIdx)
-                    prevDayTime := pickInt(prevSlot, useAlignedDaily ? dTime1On : dTime1Off, useAlignedDaily ? dTime2On : dTime2Off, useAlignedDaily ? dTime3On : dTime3Off, useAlignedDaily ? dTime4On : dTime4Off)
+                    prevDayTime := pickInt(prevSlot,
+                      useAlignedDaily ? dTime1On : dTime1Off,
+                      useAlignedDaily ? dTime2On : dTime2Off,
+                      useAlignedDaily ? dTime3On : dTime3Off,
+                      useAlignedDaily ? dTime4On : dTime4Off,
+                      useAlignedDaily ? dTime5On : dTime5Off,
+                      useAlignedDaily ? dTime6On : dTime6Off,
+                      useAlignedDaily ? dTime7On : dTime7Off,
+                      useAlignedDaily ? dTime8On : dTime8Off,
+                      useAlignedDaily ? dTime9On : dTime9Off,
+                      useAlignedDaily ? dTime10On : dTime10Off)
                 string prevDateTxt = formatDate(prevDayTime)
                 log.warning(str.format("成交对齐: chart={0} | bestDay={1} | prevDay={2} | {3}", chartDateTxt, bestDateTxt, prevDateTxt, decisionMsg))
             if showSwitchLabel and str.length(decisionMsg) > 0
@@ -730,18 +961,17 @@ stdRet = not na(variance) ? math.sqrt(variance) : na
 sharpeAnnual = tradeSamples > 1 and stdRet > 0 ? (meanRet / stdRet) * math.sqrt(252) : na
 
 if barstate.islast
-    string signalSmoothDesc = signalMaWindow > 0 ? str.format("{0}({1})", signalMaType, signalMaWindow) : "原始值"
-    string signalParamDetail = str.format("平滑: {0}", signalSmoothDesc)
-    string signalColumnHeader = str.format("信号\n{0}", signalParamDetail)
+    string signalColumnHeader = "最终信号"
     table.cell(infoTable, 0, 0, "品种", text_color=color.white, bgcolor=color.new(color.blue, 40))
     table.cell(infoTable, 1, 0, str.format("{0}日动量", lookbackDays), text_color=color.white, bgcolor=color.new(color.blue, 40))
-    table.cell(infoTable, 2, 0, signalColumnHeader, text_color=color.white, bgcolor=color.new(color.blue, 40))
-    table.cell(infoTable, 3, 0, "收盘", text_color=color.white, bgcolor=color.new(color.blue, 40))
-    table.cell(infoTable, 4, 0, "开盘", text_color=color.white, bgcolor=color.new(color.blue, 40))
-    table.cell(infoTable, 5, 0, "累计盈亏", text_color=color.white, bgcolor=color.new(color.blue, 40))
-    table.cell(infoTable, 6, 0, "胜率", text_color=color.white, bgcolor=color.new(color.blue, 40))
-    table.cell(infoTable, 7, 0, "盈亏比", text_color=color.white, bgcolor=color.new(color.blue, 40))
-    table.cell(infoTable, 8, 0, "过滤", text_color=color.white, bgcolor=color.new(color.blue, 40))
+    table.cell(infoTable, 2, 0, "波动率×权重", text_color=color.white, bgcolor=color.new(color.blue, 40))
+    table.cell(infoTable, 3, 0, signalColumnHeader, text_color=color.white, bgcolor=color.new(color.blue, 40))
+    table.cell(infoTable, 4, 0, "收盘", text_color=color.white, bgcolor=color.new(color.blue, 40))
+    table.cell(infoTable, 5, 0, "开盘", text_color=color.white, bgcolor=color.new(color.blue, 40))
+    table.cell(infoTable, 6, 0, "累计盈亏", text_color=color.white, bgcolor=color.new(color.blue, 40))
+    table.cell(infoTable, 7, 0, "胜率", text_color=color.white, bgcolor=color.new(color.blue, 40))
+    table.cell(infoTable, 8, 0, "盈亏比", text_color=color.white, bgcolor=color.new(color.blue, 40))
+    table.cell(infoTable, 9, 0, "过滤", text_color=color.white, bgcolor=color.new(color.blue, 40))
     sortTableRowsBySignal()
     for rank = 0 to assetCount - 1
         row = rank + 1
@@ -749,6 +979,7 @@ if barstate.islast
         lbl = array.get(labels, symIdx)
         mom = array.get(momentumLookback, symIdx)
         sig = array.get(signalSeries, symIdx)
+        vol = array.get(volSeries, symIdx)
         cls = array.get(closeSeries, symIdx)
         opn = array.get(openSeries, symIdx)
         isHeld = not na(holdingIdx) and holdingIdx == symIdx
@@ -765,13 +996,15 @@ if barstate.islast
         profitFactor = lossSum < 0 ? profSum / math.abs(lossSum) : na
         table.cell(infoTable, 0, row, lbl, bgcolor=bg, text_color = text_color)
         table.cell(infoTable, 1, row, na(mom) ? "N/A" : str.tostring(mom * 100, format.mintick) + "%", bgcolor=bg, text_color = text_color)
-        table.cell(infoTable, 2, row, na(sig) ? "N/A" : str.tostring(sig * 100, format.mintick) + "%", bgcolor=bg, text_color = text_color)
-        table.cell(infoTable, 3, row, str.tostring(cls, format.mintick), bgcolor=bg, text_color = text_color)
-        table.cell(infoTable, 4, row, str.tostring(opn, format.mintick), bgcolor=bg, text_color = text_color)
-        table.cell(infoTable, 5, row, str.format("{0,number,#.##}%", totalPctSym), bgcolor=bg, text_color = text_color)
-        table.cell(infoTable, 6, row, na(winRateSym) ? "N/A" : str.format("{0,number,#.##}%", winRateSym), bgcolor=bg, text_color = text_color)
-        table.cell(infoTable, 7, row, na(profitFactor) ? "N/A" : str.tostring(profitFactor, format.mintick), bgcolor=bg, text_color = text_color)
-        table.cell(infoTable, 8, row, blocked ? "停用" : "—", bgcolor=bg, text_color = text_color)
+        float volAdjusted = na(vol) ? na : vol * volAdjustWeight
+        table.cell(infoTable, 2, row, na(volAdjusted) ? "N/A" : str.tostring(volAdjusted * 100, format.mintick) + "%", bgcolor=bg, text_color = text_color)
+        table.cell(infoTable, 3, row, na(sig) ? "N/A" : str.tostring(sig * 100, format.mintick) + "%", bgcolor=bg, text_color = text_color)
+        table.cell(infoTable, 4, row, str.tostring(cls, format.mintick), bgcolor=bg, text_color = text_color)
+        table.cell(infoTable, 5, row, str.tostring(opn, format.mintick), bgcolor=bg, text_color = text_color)
+        table.cell(infoTable, 6, row, str.format("{0,number,#.##}%", totalPctSym), bgcolor=bg, text_color = text_color)
+        table.cell(infoTable, 7, row, na(winRateSym) ? "N/A" : str.format("{0,number,#.##}%", winRateSym), bgcolor=bg, text_color = text_color)
+        table.cell(infoTable, 8, row, na(profitFactor) ? "N/A" : str.tostring(profitFactor, format.mintick), bgcolor=bg, text_color = text_color)
+        table.cell(infoTable, 9, row, blocked ? "停用" : "—", bgcolor=bg, text_color = text_color)
     startText = formatDate(backtestStart)
     endText = formatDate(backtestEnd)
     table.cell(ddTable, 0, 0, "指标", text_color=color.white, bgcolor=color.new(color.blue, 40))
