@@ -63,8 +63,9 @@ signalMaWindowInput = input.int(3, "Signal MA窗口 (0=关闭)", minval=0, group
 signalMaWindow = signalMaWindowInput <= 1 ? 0 : signalMaWindowInput
 signalMaType = input.string("SMA", "Signal MA类型", options=["SMA", "EMA", "RMA"], group="Logic")
 signalVolAdjust = input.string("subtract", "波动率调整方式", options=["none", "subtract", "divide"], group="Logic", tooltip="none: 不做波动率调整；subtract: 信号减去波动率项；divide: 信号除以(1+权重*波动率)")
+volCalcMethod = input.string("EWMA", "波动率计算方式", options=["EWMA", "STDEV"], group="Logic", tooltip="EWMA: 对收益率平方做EMA后开方；STDEV: 收益率标准差")
 volWindow = lookbackDays
-volAdjustWeight = input.float(1.0, "波动率调整权重", step=0.1, group="Logic", tooltip="信号 = 原始信号 - 权重 * 波动率(收益率标准差)")
+volAdjustWeight = input.float(1.0, "波动率调整权重", step=0.1, group="Logic", tooltip="信号 = 原始信号 - 权重 * 波动率(收益率)")
 entryThreshold = input.float(0.03, "Entry 阈值(绝对)", step=0.01, group="Logic")
 switchDelta = input.float(0.02, "Switch Δ(相对)", step=0.01, group="Logic")
 executionMode = input.string("收盘", "换仓时点", options=["收盘", "次日开盘"], group="Logic", tooltip="在信号日收盘成交或下一交易日开盘成交")
@@ -316,7 +317,11 @@ int maLenSafe = math.max(signalMaWindow, 1)
 
 calcVol() =>
     ret = close / close[1] - 1
-    ta.stdev(ret, volWindow)
+    if volCalcMethod == "EWMA"
+        ewmaVar = ta.ema(ret * ret, volWindow)
+        math.sqrt(ewmaVar)
+    else
+        ta.stdev(ret, volWindow)
 
 calcMomentum() =>
     close / close[lookbackDays] - 1
