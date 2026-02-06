@@ -65,7 +65,7 @@ volWindow = lookbackDays
 volAdjustWeight = input.float(1.0, "波动率调整权重", step=0.1, group="Logic", tooltip="信号 = 原始信号 - 权重 * 波动率(收益率)")
 entryThreshold = input.float(0.03, "Entry 阈值(绝对)", step=0.01, group="Logic")
 switchDelta = input.float(0.02, "Switch Δ(相对)", step=0.01, group="Logic")
-signalMaWindowInput = input.int(3, "平滑窗口 (0=关闭)", minval=0, group="Logic")
+signalMaWindowInput = input.int(2, "平滑窗口 (0=关闭)", minval=0, group="Logic")
 signalMaWindow = signalMaWindowInput <= 1 ? 0 : signalMaWindowInput
 smoothMomentum = input.bool(true, "动量平滑", group="Logic", tooltip="对动量(m)做MA平滑")
 smoothFinalSignal = input.bool(true, "最终信号平滑", group="Logic", tooltip="对波动率调整后的信号做MA平滑")
