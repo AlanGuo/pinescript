@@ -4,7 +4,8 @@ strategy("CROSS", initial_capital = 10000, calc_on_every_tick = true, default_qt
 // 定义回测时间段
 start_date = input.time(timestamp("1 Feb 2018 00:00 +0800"), "Date", group = "时间")
 end_date = input.time(timestamp("31 Dec 2099 00:00 +0800"), "Date", group = "时间")
-signalSymbol = input.symbol("SPX", "信号标的", group = "时间")
+signalSymbol = input.symbol("", "信号标的", group = "时间")
+string ref_symbol = signalSymbol == "" ? syminfo.ticker : signalSymbol
 
 // 定义MA
 ma_length = input.int(120, title = "均线")
@@ -23,8 +24,8 @@ compare = input.string(title="相对强势", defval=no, options=[spx, ndx, dxy, 
 ratio = input.float(1000.0, title="价格乘数", group = "相对")
 ma_offset = input.float(15.0, title="均线偏离%", group = "均线偏离") / 100
 ma_offset_close = input.bool(false, title="均线偏离平仓", group = "均线偏离")
-signalClose = request.security(signalSymbol, timeframe.period, close)
-signalHigh = request.security(signalSymbol, timeframe.period, high)
+signalClose = request.security(ref_symbol, timeframe.period, close)
+signalHigh = request.security(ref_symbol, timeframe.period, high)
 ma_value = ma_option == "SMA" ? ta.sma(signalClose, ma_length) : (ma_option == "EMA" ? ta.ema(signalClose, ma_length) : ta.rma(signalClose, ma_length))
 long_ma_value = ma_option == "SMA" ? ta.sma(signalClose, long_ma_length) : (ma_option == "EMA" ? ta.ema(signalClose, long_ma_length) : ta.rma(signalClose, long_ma_length))
 
